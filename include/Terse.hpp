@@ -338,6 +338,8 @@ class Terse {
     static_assert(std::is_same_v<CONCURRENT, void>, "Concurrent.hpp must be included before #include \"Terse.hpp\"");
 #endif
     
+    template <typename T> friend class Terse;
+
 public:
     /**
      * @brief Initializes an empty Terse object.
@@ -403,13 +405,7 @@ public:
      */
     template <typename Iterator>
     void insert(std::size_t const pos, Iterator const data, size_t const size, Terse_mode mode = Terse_mode::Default) noexcept {
-        using T = std::remove_cvref_t<decltype(*data)>;
-        if (std::is_signed_v<T>)
-            mode = Terse_mode::Signed;
-        f_validate_insert<T>(pos, size, mode);
-        d_metadata.insert(d_metadata.begin() + pos, "");
-        auto at = d_terse_frames.begin() + pos;
-        d_terse_frames.insert(at, f_compress(mode, data));
+        insert(pos, std::span(data, data + static_cast<std::ptrdiff_t>(size)), mode);
     }
     
     /**
@@ -424,29 +420,37 @@ public:
      * @tparam C The type of the container containing integral data.
      * @param pos The location where the data need to be inserted.
      * @param data The container containing integral data.
+     * @throws std::invalid_argument If the dimensions of this Terse object and the provided frame  differ.
      */
     template <Container C>
-    void insert(std::size_t const pos, C&& data, Terse_mode mode = Terse_mode::Default) noexcept {
+    void insert(std::size_t const pos, C&& data, Terse_mode mode = Terse_mode::Default) {
+        bool dim_ok = true;
         if constexpr (requires(C& c) { c.dim(); }) {
             for (std::size_t i = 0; i != data.dim().size(); ++i)
                 if (number_of_frames() == 0)
-                    d_dim.push_back(data.dim()[i]);
+                    d_dim.push_back(static_cast<std::size_t>(data.dim()[i]));
                 else
-                    assert(d_dim[i] == data.dim()[i]); 
+                    dim_ok = dim_ok && d_dim[i] == static_cast<std::size_t>(data.dim()[i]);
         }
         else if constexpr(requires (C &c) {c.request().shape;}) {
             auto shape = data.request().shape;
             if (number_of_frames() == 0)
                 d_dim = std::vector<std::size_t>(shape.begin(), shape.end());
             else
-                assert(d_dim == std::vector<std::size_t>(shape.begin(), shape.end())); 
+                dim_ok = dim_ok && d_dim == std::vector<std::size_t>(shape.begin(), shape.end());
         }
+        if (!dim_ok)
+            throw(std::invalid_argument("The provided container and the requested frame have different dimensions"));
         using T = std::remove_cv_t<std::remove_reference_t<decltype(*data.data())>>;
         if (std::is_signed_v<T>)
             mode = Terse_mode::Signed;
-        f_validate_insert<T>(pos, data.size(), mode);
-        d_metadata.insert(d_metadata.begin() + pos, "");
-        auto at = d_terse_frames.begin() + pos;
+        d_prolix_bits = std::max(d_prolix_bits, 8 * static_cast<unsigned>(sizeof(T)));
+        if (number_of_frames() == 0) {
+            d_size = data.size();
+            d_signed = std::is_signed_v<T>;
+        }
+        d_metadata.insert(d_metadata.begin() + static_cast<std::ptrdiff_t>(pos), "");
+        auto at = d_terse_frames.begin() + static_cast<std::ptrdiff_t>(pos);
         if constexpr (std::is_lvalue_reference_v<C&&>)
             d_terse_frames.insert(at, f_compress(mode, data.data()));
         else if constexpr (std::is_same_v<CONCURRENT, Concurrent>)
@@ -466,16 +470,26 @@ public:
      * @tparam T Either void or Concurrent.
      * @param pos The location where the data need to be inserted.
      * @param trs The Terse object to be appended.
+     * @throws std::out_of_range If the provided Terse object index is greater than or equal to the number of frames.
+     * @throws std::invalid_argument If the provided Terse object differs in signedness, size, block size of dimensionality from this Terse object.
      */
     template <typename T>
-    void insert(std::size_t const pos, Terse<T>& trs) noexcept {
+    void insert(std::ptrdiff_t const pos, Terse<T>& trs) {
         if (number_of_frames() == 0) {
             d_signed = trs.d_signed;
             d_block = trs.d_block;
             d_size = trs.d_size;
             d_dim = trs.d_dim;
         }
-        assert(pos <= number_of_frames() && trs.d_signed == d_signed && trs.d_block == d_block && trs.d_size == d_size && trs.d_dim == d_dim);
+        if (static_cast<std::size_t>(pos) > number_of_frames()) throw std::out_of_range("Frame index is out of range.");
+        if (trs.d_dim != d_dim)
+            throw(std::invalid_argument("Dimension mismatch of the provided Terse object"));
+        if (trs.d_signed != d_signed)
+            throw(std::invalid_argument("Sign mismatch of the provided Terse object"));
+        if (trs.d_block != d_block)
+            throw(std::invalid_argument("Blocksize mismatch of the provided Terse object"));
+        if (trs.d_size != d_size)
+            throw(std::invalid_argument("Size mismatch of the provided Terse object"));
         d_metadata.insert(d_metadata.begin() + pos, trs.d_metadata.begin(), trs.d_metadata.end());
         shrink_to_fit();
         trs.shrink_to_fit();
@@ -532,14 +546,14 @@ public:
      * @param trs The Terse object to be appended.
      */
     template <typename T>
-    void push_back(Terse<T>& trs) noexcept { insert(number_of_frames(), trs); }
+    void push_back(Terse<T>& trs) noexcept { insert(static_cast<std::ptrdiff_t>(number_of_frames()), trs); }
 
     /**
      * @brief Removes one of the frames from the Terse object. Also waits until concurrent compression has finished, and release unused storage to the heap.
      *
      * @param i The index of the frame to be removed.
     */
-    void erase(std::size_t i) noexcept {
+    void erase(std::ptrdiff_t i) noexcept {
         shrink_to_fit();
         d_metadata.erase(d_metadata.begin() + i);
         d_terse_frames.erase(d_terse_frames.begin() + i);
@@ -549,9 +563,10 @@ public:
      * @brief Returns a selected frame as a Terse object.
      *
      * @param pos The index of the selected frame.
+     * @throws std::out_of_range If the provided frame index is greater than or equal to the number of frames.
     */
-    Terse at(std::size_t pos) noexcept {
-        assert(pos < number_of_frames());
+    Terse at(std::size_t pos) {
+        if (pos >= number_of_frames()) throw std::out_of_range("Frame index is out of range.");
         Terse result;
         result.d_signed = d_signed;
         result.d_block = d_block;
@@ -566,21 +581,24 @@ public:
     /**
      * @brief Unpacks the Terse data of the requested frame and stores it in the provided container.
      *
-     * Also asserts that the container is large enough.
-     *
      * @tparam C The type of the container.
      * @param container The container where the data will be stored.
      * @param frame The index of the frame to unpack (default is 0).
+     * @throws std::invalid_argument If the provided container does not have enough space to unpack all frames,
+     * or the number of dimensions of the requested frame and the provided container differ.
      */
     template <Container C>
-    C&& prolix(C&& container, std::size_t frame) noexcept {
-        assert(this->size() == container.size());
+    C&& prolix(C&& container, std::size_t frame) {
+        if (this->size() != container.size())
+            throw(std::invalid_argument("The provided container not have enough space for the requested frame of the Terse object"));
+        bool dim_ok = true;
         if constexpr(requires (C &c) {c.dim();})
             for (int i = 0; i != d_dim.size(); ++i)
-                assert(d_dim[i] == container.dim()[i]);
+                dim_ok = dim_ok && d_dim[i] == container.dim()[i];
         else if constexpr(requires (C &c) {c.request().shape;})
-            assert(d_dim == container.request().shape);
-        assert(frame < number_of_frames());
+            dim_ok = dim_ok && d_dim == container.request().shape;
+        if (!dim_ok)
+            throw(std::invalid_argument("The provided container and the requested frame have different dimensions"));
         prolix(container.data(), frame);
         return std::forward<C>(container);
     }
@@ -589,16 +607,16 @@ public:
      * @brief Unpacks all the Terse data and stores these consecutively in the provided container of
      * numerical values.
      *
-     * Also asserts that the container is large enough.
-     *
      * @tparam C The type of the container.
      * @param container The container where the data will be stored.
+     * @throws std::invalid_argument If the provided container does not have enough space to unpack all frames.
      */
     template <Container C> requires std::is_arithmetic_v<typename std::remove_cvref_t<C>::value_type>
-    C&& prolix(C&& container) noexcept {
+    C&& prolix(C&& container) {
         if (size() == container.size() && number_of_frames() != 0)
             return prolix(std::forward<C>(container), 0);
-        assert(size() * number_of_frames() == container.size());
+        if (size() * number_of_frames() != container.size())
+            throw(std::invalid_argument("The provided container not have enough space for unpacking all frames of the Terse object"));
         auto* data_ptr = [&]() {
             if constexpr (requires (C &c) { c.mutable_data(); }) return container.mutable_data();
             else return container.data();
@@ -609,7 +627,7 @@ public:
         else {
             std::vector<std::future<void>> futures;
             for (std::size_t i = 0; i != number_of_frames(); ++i)
-                futures.push_back(d_concurrent->background([this, &container, i, &data_ptr] {
+                futures.push_back(d_concurrent->background([this, i, &data_ptr] {
                     prolix(data_ptr + i * size(), i);
                 }));
             for (auto& future : futures) future.get();
@@ -621,26 +639,28 @@ public:
      * @brief Unpacks all the Terse data and stores it in the provided container of containers.
      * Each frame is stored separately in each sub-container.
      *
-     * Also asserts that the container is large enough.
-     *
      * @tparam C The type of the container.
      * @param container The container where the data will be stored.
+     * @throws std::invalid_argument If the provided container does not have enough sub-containers to unpack all frames.
      */
     template <Container C> requires Container<typename std::remove_cvref_t<C>::value_type>
-    C&& prolix(C&& container) noexcept {
+    C&& prolix(C&& container) {
         if (number_of_frames() == 1)
             prolix(container[0], 0);
-        assert(container.size() == number_of_frames());
-        if constexpr (std::is_same_v<CONCURRENT, void>)
-            for (std::size_t i = 0; i != number_of_frames(); ++i)
-                prolix(container[i], i);
         else {
-            std::vector<std::future<void>> futures;
-            for (std::size_t i = 0; i != number_of_frames(); ++i)
-                futures.push_back(d_concurrent->background([this, &container, i] {
+            if (container.size() < number_of_frames())
+                throw(std::invalid_argument("The provided container does not have enough subcontainers for unpacking all frames of the Terse object"));
+            if constexpr (std::is_same_v<CONCURRENT, void>)
+                for (std::size_t i = 0; i != number_of_frames(); ++i)
                     prolix(container[i], i);
-                }));
-            for (auto& future : futures) future.get();
+            else {
+                std::vector<std::future<void>> futures;
+                for (std::size_t i = 0; i != number_of_frames(); ++i)
+                    futures.push_back(d_concurrent->background([this, &container, i] {
+                        prolix(container[i], i);
+                    }));
+                for (auto& future : futures) future.get();
+            }
         }
         return std::forward<C>(container);
     }
@@ -653,10 +673,14 @@ public:
      * @tparam Iterator The type of the iterator.
      * @param begin The starting iterator or pointer where the data will be stored.
      * @param frame The index of the frame to unpack (default is 0).
+     * @throws std::out_of_range If the provided frame index is greater than or equal to the number of frames.
+     * @throws std::invalid_argument If the iterator refers unsigned values, when the Terse object contains signed values.
      */
     template <typename Iterator> requires requires (Iterator& i) {*i;}
-    void prolix(Iterator begin, std::size_t frame = 0) noexcept {
-        assert(frame < number_of_frames());
+    void prolix(Iterator begin, std::size_t frame = 0) {
+        if (frame >= number_of_frames()) throw std::out_of_range("Frame index is out of range.");
+        if (is_signed() && std::unsigned_integral<typename std::iterator_traits<Iterator>::value_type>)
+            throw std::invalid_argument("Cannot decompress signed data into an unsigned container.");
         switch (d_block) {
             case(8)  : return f_prolix<8> (begin, frame);
             case(9)  : return f_prolix<9> (begin, frame);
@@ -680,14 +704,14 @@ public:
      *
      * @return The number of encoded elements.
      */
-    std::size_t const size() const noexcept { return d_size; }
+    std::size_t size() const noexcept { return d_size; }
     
     /**
      * @brief Returns the number of frames stored in the Terse object.
      *
      * @return The number of frames stored in the Terse object.
      */
-    std::size_t const number_of_frames() const noexcept { return d_terse_frames.size(); }
+    std::size_t number_of_frames() const noexcept { return d_terse_frames.size(); }
     
     /**
      * @brief Returns the dimensions of each of the Terse frames (all frames in a Terse object must have the same dimensions).
@@ -701,12 +725,14 @@ public:
      * the dimensions can be set to any value. Otherwise, the the total number of elements defined per frame is fixed.
      *
      * @param dim The dimensions to set for the Terse frames.
+     * @throws std::invalid_argument If the provided dimensions differ from dimensions that were set earlier.
      */
-    void dim(std::vector<std::size_t> const& dim) noexcept {
+    void dim(std::vector<std::size_t> const& dim) {
         if (d_dim.size() == 0 || size() == std::accumulate(dim.begin(), dim.end(), 1ul, std::multiplies<>()))
             d_dim = dim;
-        assert (dim == d_dim);
-    }
+        if (dim != d_dim)
+            throw std::invalid_argument("Dimensions already set.");
+   }
     
     /**
      * @brief Returns the block size that is used for compression.
@@ -743,11 +769,48 @@ public:
      * @param new_dop The new degree of partiality (0 for sequential compression, 1 for using all cores).
      */
     void dop(double new_dop) noexcept requires std::is_same_v<CONCURRENT, Concurrent> {
-        for (int i = 0; i!= d_terse_frames.size(); ++i)
+        for (std::size_t i = 0; i!= d_terse_frames.size(); ++i)
             f_get_frame(i);
         d_concurrent = Concurrent(new_dop);
     }
+    
+    /**
+     * @brief Returns the fractional precision for lossy floating point compression.
+     *
+     * @return The fractional precision for lossy floating point compression; a number between 1 (loss of all information)
+     * and 0 (lossless floating point compression). For fractional precsion of 0.01 indicates a precision of 1%.
+     */
+    double fractional_precision() const noexcept { return static_cast<double>(1) / (static_cast<std::size_t>(1) << (d_binary_precision - 1)); }
+    
+    /**
+     * @brief Sets the fractional precision for lossy floating point compression.
+     *
+     * @param frac The fractional precision for lossy floating point compression; a number between 1 (loss of all information)
+     * and 0 (lossless floating point compression). For fractional precision of 0.01 indicates a precision of 1%.
+     */
+    void fractional_precision(double frac) {
+        auto precision = 1 + std::ceil(std::log2(1 / frac));
+        d_binary_precision = static_cast<std::uint8_t>(std::min(precision, 54.0));
+    }
 
+    /**
+     * @brief Checks if at least one of the frames in the Terse object has floating point values.
+     *
+     * @return True  any of the frames has floating point values.
+     */
+    bool is_float() {
+        for (std::size_t i = 0; i != d_terse_frames.size(); ++i)
+            if (is_float(i)) return true;
+        return false;
+    }
+    
+    /**
+     * @brief Checks if the frame with the specified index has floatinging point values.
+     *
+     * @return True  if the frame with the specified index has floating point values
+     */
+    bool is_float(std::size_t frame_num) { return (Bitqueue_pop(f_get_frame(frame_num)).pop<18, std::size_t>() == 0b111111111111111010); }
+    
     /**
      * @brief Returns if the default mode of compression for unsigned data is set to Terse_mode::Small_unsigned.
      *
@@ -799,7 +862,7 @@ public:
      */
     std::size_t terse_size() noexcept {
         std::size_t memsize = 0;
-        for (int i = 0; i!= d_terse_frames.size(); ++i)
+        for (std::size_t i = 0; i!= d_terse_frames.size(); ++i)
             memsize += f_get_frame(i).size();
         return memsize;
     }
@@ -830,8 +893,8 @@ public:
     void write(std::ostream& ostream) {
         if (number_of_frames() == 0) return;
         f_write_metadata(ostream);
-        for (int i = 0; i!= d_terse_frames.size(); ++i)
-            ostream.write(reinterpret_cast<const char*>(f_get_frame(i).data()), f_get_frame(i).size());
+        for (std::size_t i = 0; i!= d_terse_frames.size(); ++i)
+            ostream.write(reinterpret_cast<const char*>(f_get_frame(i).data()), static_cast<std::ptrdiff_t>(f_get_frame(i).size()));
         ostream.flush();
     }
     
@@ -841,7 +904,7 @@ public:
      * processes to finish. It has no effect when Terse object are read from a stream.
      */
     void shrink_to_fit() noexcept {
-        for (int i = 0; i!= d_terse_frames.size(); ++i)
+        for (std::size_t i = 0; i!= d_terse_frames.size(); ++i)
             f_get_frame(i).shrink_to_fit();
     }
     
@@ -851,14 +914,15 @@ public:
      *
      * @param data The metadata as a string object.
      * @param pos The number of the frame pertaining to the metadata.
+     * @throws std::out_of_range If the provided frame index is greater than or equal to the number of frames.
      */
-    void metadata(std::size_t const pos, std::string const data) noexcept {
-        assert(pos < d_terse_frames.size());
+    void metadata(std::size_t const pos, std::string const data) {
+        if (pos >= number_of_frames()) throw std::out_of_range("Frame index is out of range.");
         d_metadata[pos] = data;
     }
 
-    void metadata(std::string data) noexcept {
-        assert(d_terse_frames.size() > 1);
+    void metadata(std::string data) {
+        if (number_of_frames() == 0) throw std::invalid_argument("Cannot add metadata, as this Terse object has no frames.");
         d_metadata[0] = data;
     }
 
@@ -880,10 +944,11 @@ private:
 
     FrameStorage d_terse_frames;
     bool d_signed;
-    bool d_small = false;
+    bool d_small = true;
     std::size_t d_block = 12;
     std::size_t d_size = 0;
     unsigned d_prolix_bits = 0;
+    std::uint8_t d_binary_precision = 54;
     std::vector<std::size_t> d_dim;
     std::vector<std::string> d_metadata;
     std::optional<Concurrent> d_concurrent = []() -> std::optional<Concurrent> {
@@ -896,18 +961,18 @@ private:
         if (!istream.eof()) {
             d_prolix_bits = unsigned(std::stoul(xmle.attribute("prolix_bits")));
             d_signed = std::stoul(xmle.attribute("signed"));
-            d_block = int(std::stoul(xmle.attribute("block")));
+            d_block = std::stoul(xmle.attribute("block"));
             d_size = std::stoull(xmle.attribute("number_of_values"));
             std::istringstream dim_str(xmle.attribute("dimensions"));
-            unsigned int val;
-            while (dim_str >> val)
-                d_dim.push_back(val);
+            unsigned int d;
+            while (dim_str >> d)
+                d_dim.push_back(d);
             if (xmle.attribute("metadata_string_sizes") != "") {
                 std::istringstream meta_str(xmle.attribute("metadata_string_sizes"));
                 unsigned int val;
                 while (meta_str >> val) {
                     d_metadata.push_back(std::string(val, ' '));
-                    istream.read((char*)&d_metadata.back(), val);
+                    istream.read(reinterpret_cast<char*>(&d_metadata.back()), val);
                 }
             }
             d_terse_frames.resize(std::stoull(xmle.attribute("number_of_frames")));
@@ -918,10 +983,10 @@ private:
             else {
                 std::istringstream frame_sizes_str(xmle.attribute("memory_sizes_of_frames"));
                 unsigned int val;
-                for (int i = 0; i != d_terse_frames.size(); ++i) {
+                for (std::size_t i = 0; i != d_terse_frames.size(); ++i) {
                     frame_sizes_str >> val;
                     f_get_frame(i).resize(val);
-                    istream.read((char*)&(f_get_frame(i)[0]), f_get_frame(i).size());
+                    istream.read(reinterpret_cast<char*>(&(f_get_frame(i)[0])), static_cast<std::ptrdiff_t>(f_get_frame(i).size()));
                 }
             }
         }
@@ -929,33 +994,29 @@ private:
     
     void f_write_metadata(std::ostream& ostream) {
         std::size_t memory_size = terse_size();
-        ostream << "<Terse prolix_bits=\"" << d_prolix_bits << "\"";
-        ostream << " signed=\"" << d_signed << "\"";
-        ostream << " block=\"" << d_block << "\"";
-        ostream << " number_of_values=\"" << size() << "\"";
-        if (!d_dim.empty()) {
-            ostream << " dimensions=\"";
-            for (size_t i = 0; i + 1 != d_dim.size(); ++i)
-                ostream << d_dim[i] << " ";
-            ostream << d_dim.back() << "\"";
-        }
-        ostream << " number_of_frames=\"" << d_terse_frames.size() << "\"";
-        ostream << " memory_sizes_of_frames=\"";
-        for (size_t i = 0; i + 1 != d_terse_frames.size(); ++i)
-            ostream << f_get_frame(i).size() << " ";
-        ostream << f_get_frame(d_terse_frames.size() - 1).size() << "\"";
-        ostream << " memory_size=\"" << memory_size << "\"";
+        XML_element xml("<Terse/>");
+        xml.add_attribute("prolix_bits", d_prolix_bits);
+        xml.add_attribute("signed", d_signed);
+        xml.add_attribute("block", d_block);
+        xml.add_attribute("number_of_values", size());
+        if (!d_dim.empty()) xml.add_attribute("dimensions", d_dim);
+        xml.add_attribute("number_of_frames", d_terse_frames.size());
+        std::vector<size_t> frame_sizes;
+        for (size_t i = 0; i != d_terse_frames.size(); ++i)
+            frame_sizes.push_back(f_get_frame(i).size());
+        xml.add_attribute("memory_sizes_of_frames", frame_sizes);
+        xml.add_attribute("memory_size", memory_size);
         if (!d_metadata.empty()) {
-            ostream << " metadata_string_sizes=\"";
-            for (size_t i = 0; i + 1 != d_metadata.size(); ++i)
-                ostream << d_metadata[i].size() << " ";
-            ostream << d_metadata.back().size() << "\"";
+            std::vector<size_t> metadata_sizes;
+            for (size_t i = 0; i != d_metadata.size(); ++i)
+                metadata_sizes.push_back(d_metadata[i].size());
+            xml.add_attribute("metadata_string_sizes", metadata_sizes);
         }
-        ostream << "/>";
-        for (auto& str : d_metadata)
-            ostream.write(reinterpret_cast<const char*>(str.data()), str.size());
+        ostream << xml.XML();
+        for (auto& str : d_metadata) ostream << str;
         ostream.flush();
     }
+
     std::vector<std::uint8_t>& f_get_frame(std::size_t index) noexcept {
         if constexpr (std::is_same_v<CONCURRENT, void>)
             return d_terse_frames[index];
@@ -966,32 +1027,15 @@ private:
         }
     }
 
-    template <typename T>
-    void f_validate_insert(std::size_t const pos, size_t const size, Terse_mode const mode) noexcept {
-        assert(pos <= number_of_frames());
-        d_prolix_bits = std::max(d_prolix_bits, 8 * static_cast<unsigned>(sizeof(T)));
-        if (number_of_frames() == 0) {
-            d_size = size;
-            d_signed = std::is_signed_v<T>;
-        }
-        else {
-            assert(this->size() == size); // each frame of a multi-Terse object must have the same size
-            assert(d_signed == std::is_signed_v<T>);
-        }
-        if (d_signed)
-            assert(mode == Terse_mode::Signed);
-    }
-    
     template <typename Iterator>
     auto f_compress(Terse_mode mode, Iterator const data_begin) {
         if constexpr (std::is_signed_v<std::remove_reference_t<decltype(*data_begin)>>)
-            mode = Terse_mode::Signed;
-        switch (mode) {
-            case Terse_mode::Small_unsigned:    return f_compress<Terse_mode::Small_unsigned>(data_begin);
+            return f_compress<Terse_mode::Signed>(data_begin);
+        else switch (mode) {
             case Terse_mode::Unsigned:     return f_compress<Terse_mode::Unsigned>(data_begin);
+            case Terse_mode::Small_unsigned:    return f_compress<Terse_mode::Small_unsigned>(data_begin);
             case Terse_mode::Signed:   return f_compress<Terse_mode::Signed>(data_begin);
-            case Terse_mode::Default: return d_small ? f_compress<Terse_mode::Small_unsigned>(data_begin) : f_compress<Terse_mode::Unsigned>(data_begin);
-            default: throw std::invalid_argument("Invalid Terse_mode");
+            default: return d_small ? f_compress<Terse_mode::Small_unsigned>(data_begin) : f_compress<Terse_mode::Unsigned>(data_begin);
         }
     }
     
@@ -1002,10 +1046,13 @@ private:
     else bitqueue.push_back<12>(0b111110 + ((bits - 10) << 6)); \
     prevbits = bits;
 
-    template <Terse_mode MODE, typename Iterator> requires (MODE == Terse_mode::Signed || MODE == Terse_mode::Unsigned)
+    template <Terse_mode MODE, typename Iterator> requires ((MODE == Terse_mode::Signed || MODE == Terse_mode::Unsigned) &&
+                                                            std::integral<typename std::iterator_traits<Iterator>::value_type>)
     std::vector<std::uint8_t> const f_compress(Iterator data) noexcept {
         using T = std::iterator_traits<Iterator>::value_type;
-        std::vector<std::uint8_t> terse_frame(d_size * sizeof(decltype(*data)) * 0.01 + d_block * sizeof(decltype(*data)) + 2);
+        std::size_t terse_frame_size = static_cast<std::size_t>(d_size * sizeof(decltype(*data)) * 0.01) + 2 * (d_block * sizeof(decltype(*data)) + 4);
+        terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
+        std::vector<std::uint8_t> terse_frame(terse_frame_size);
         Unique_array<std::remove_const_t<T>> buffer(d_block);
         Bitqueue_push_back bitqueue(terse_frame);
         if constexpr (MODE != Terse_mode::Signed)
@@ -1013,13 +1060,15 @@ private:
         std::size_t prevbits = 0;
         std::size_t prevmasked_bits = 0;
         for (std::size_t from = 0; from < d_size; from += d_block) {
-            std::size_t index = bitqueue.data() - terse_frame.data();
+            std::size_t index = static_cast<std::size_t>(bitqueue.data() - terse_frame.data());
             if (index > terse_frame.size() - d_block * sizeof(decltype(*data)) - 2) {
-                terse_frame.resize(1.1 * terse_frame.size() * d_size / from);
+                terse_frame_size = static_cast<std::size_t>(1.1 * terse_frame.size() * d_size / from);
+                terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
+                terse_frame.resize(terse_frame_size);
                 bitqueue.relocate(terse_frame.data() + index);
             }
-            std::span<T const> data_block(data + from, data + std::min(d_size, from + d_block));
-            std::size_t significant_bits = f_most_significant_bit(data_block);
+            std::span<T const> data_block(data + static_cast<std::ptrdiff_t>(from), std::min(d_size - from, d_block));
+            std::uint8_t significant_bits = f_most_significant_bit(data_block);
             PUSH_BITS(prevbits, significant_bits);
             if constexpr (MODE == Terse_mode::Signed)
                 bitqueue.push_back(significant_bits, data_block);
@@ -1028,19 +1077,68 @@ private:
                     bitqueue.push_back(significant_bits, data_block);
                 else { // masked data
                     std::transform(data_block.begin(), data_block.end(), buffer.begin(), [](T val) {return val + 1;});
-                    std::size_t masked_bits = f_most_significant_bit(std::span(buffer.begin(), buffer.end()));
+                    std::uint8_t masked_bits = f_most_significant_bit(std::span(buffer.begin(), buffer.end()));
                     PUSH_BITS(prevmasked_bits, masked_bits);
                     bitqueue.push_back(masked_bits, buffer);
                 }
             }
         }
-        terse_frame.resize(bitqueue - terse_frame.data());
+        terse_frame_size = static_cast<std::size_t>(bitqueue - terse_frame.data());
+        terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
+        terse_frame.resize(terse_frame_size);
         return terse_frame;
     }
-    
+
+    template <Terse_mode MODE, typename Iterator> requires (std::floating_point<typename std::iterator_traits<Iterator>::value_type>)
+    std::vector<std::uint8_t> const f_compress(Iterator data) noexcept {
+        using T = std::iterator_traits<Iterator>::value_type;
+        std::uint8_t binary_precision = std::min(d_binary_precision, static_cast<std::uint8_t>(std::numeric_limits<T>::digits +1));
+        std::size_t terse_frame_size = static_cast<std::size_t>(d_size * sizeof(T) * 0.01) + 2 * (d_block * sizeof(decltype(*data)) + 4);
+        terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
+        std::vector<std::uint8_t> terse_frame(terse_frame_size);
+        Unique_array<std::remove_const_t<T>> buffer(d_block);
+        Bitqueue_push_back bitqueue(terse_frame);
+        bitqueue.push_back<18>(0b111111111111111010);
+        bitqueue.push_back<6>(binary_precision);
+        std::size_t prevbits_exponents = 0;
+        Unique_array<std::int64_t> mantissas(d_block);
+        Unique_array<int> exponents(d_block);
+        std::size_t mantissa_bits = (static_cast<std::size_t>(1) << (binary_precision - 1));
+        for (std::size_t from = 0; from < d_size; from += d_block) {
+            std::size_t index = static_cast<std::size_t>(bitqueue.data() - terse_frame.data());
+            if (index > terse_frame.size() - d_block * sizeof(decltype(*data)) - 2) {
+                terse_frame_size = static_cast<std::size_t>(1.1 * terse_frame.size() * d_size / from);
+                terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
+                terse_frame.resize(terse_frame_size);
+                bitqueue.relocate(terse_frame.data() + index);
+            }
+            std::span<T const> data_block(data + static_cast<std::ptrdiff_t>(from), std::min(d_size - from, d_block));
+            bool unsigned_block = true;
+            for (std::size_t i=0; i != data_block.size(); ++i) {
+                T mantissa_float = std::frexp(data_block[i], &exponents[i]);
+                unsigned_block = unsigned_block && (mantissa_float >= 0);
+                if (!std::isnan(mantissa_float))
+                    mantissas[i] = static_cast<std::int64_t>(std::round(mantissa_float * mantissa_bits));
+                else {
+                    mantissas[i] = 0;
+                    exponents[i] = 1 << 12;
+                }
+            }
+            bitqueue.push_back<1>(unsigned_block);
+            std::uint8_t significant_bits_exponents = f_most_significant_bit(std::span(exponents.begin(), data_block.size()));
+            PUSH_BITS(prevbits_exponents, significant_bits_exponents);
+            bitqueue.push_back(binary_precision - unsigned_block, std::span(mantissas.begin(), data_block.size()));
+            bitqueue.push_back(significant_bits_exponents, std::span(exponents.begin(), data_block.size()));
+        }
+        terse_frame_size = static_cast<std::size_t>(bitqueue - terse_frame.data());
+        terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
+        terse_frame.resize(terse_frame_size);
+        return terse_frame;
+    }
+
 #undef PUSH_BITS
 
-    template <typename T, std::size_t N>
+    template <typename T, std::size_t N> requires std::is_unsigned_v<T>
     constexpr void f_compress_weak_block(std::span<T const, N> const data_block,
                                          Bitqueue_push_back& bitqueue,
                                          T const maxval,
@@ -1064,7 +1162,7 @@ private:
             default:
                 std::size_t mult = 1;
                 std::size_t compact = 0;
-                for (int i = 0; i != data_block.size(); ++i) {
+                for (std::size_t i = 0; i != data_block.size(); ++i) {
                     compact += mult * data_block[i];
                     mult *= (maxval + 1);
                 }
@@ -1076,7 +1174,7 @@ private:
     template <typename T, std::size_t N>
     constexpr void f_compress_strong_block(std::span<T, N> const data_block,
                                            Bitqueue_push_back& bitqueue,
-                                           std::size_t const significant_bits,
+                                           std::uint8_t const significant_bits,
                                            std::size_t& previous_significant_bits)  {
         if (previous_significant_bits == significant_bits)
             bitqueue.push_back<2>(0b11);
@@ -1097,20 +1195,25 @@ private:
     template <Terse_mode MODE, typename Iterator> requires (MODE == Terse_mode::Small_unsigned)
     std::vector<std::uint8_t> const f_compress(Iterator data) noexcept {
         using T = std::iterator_traits<Iterator>::value_type;
+        static_assert(std::is_unsigned_v<T>, "Cannot compress signed data with Terse_mode::small");
         //std::size_t const block = std::min(d_block, 24ul);
-        std::size_t const block = std::min(d_block, std::size_t(24));
-        std::vector<std::uint8_t> terse_frame(d_size * sizeof(T) * 0.01 + block * sizeof(T) + 2);
+        std::size_t block = std::min(d_block, std::size_t(24));
+        std::size_t terse_frame_size = static_cast<std::size_t>(d_size * sizeof(decltype(*data)) * 0.01) + 2 * (d_block * sizeof(decltype(*data)) + 4);
+        terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
+        std::vector<std::uint8_t> terse_frame(terse_frame_size);
         Bitqueue_push_back bitqueue(terse_frame);
         bitqueue.push_back<18>(0b111111111111111100);
         T prevmax = 0;
         std::size_t prevbits = 0;
         for (std::size_t from = 0; from < d_size; from += block) {
-            std::size_t index = bitqueue.data() - terse_frame.data();
+            std::size_t index = static_cast<std::size_t>(bitqueue.data() - terse_frame.data());
             if (index > terse_frame.size() - block * sizeof(decltype(*data)) - 2) {
-                terse_frame.resize(1.1 * terse_frame.size() * d_size / from);
+                terse_frame_size = static_cast<std::size_t>(1.1 * terse_frame.size() * d_size / from);
+                terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
+                terse_frame.resize(terse_frame_size);
                 bitqueue.relocate(terse_frame.data() + index);
             }
-            std::span<T const> data_block(data + from, data + std::min(d_size, from + block));
+            std::span<T const> data_block(data + static_cast<std::ptrdiff_t>(from), std::min(d_size - from, d_block));
             T max = std::ranges::max(data_block);
             if (max < 7) {
                 f_compress_weak_block(data_block, bitqueue, max, prevmax);
@@ -1126,7 +1229,9 @@ private:
                 }
             }
         }
-        terse_frame.resize(bitqueue - terse_frame.data());
+        terse_frame_size = static_cast<std::size_t>(bitqueue - terse_frame.data());
+        terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
+        terse_frame.resize(terse_frame_size);
         return terse_frame;
     }
     
@@ -1135,7 +1240,8 @@ private:
                            std::vector<std::uint8_t>& terse_frame,
                            std::size_t& from,
                            Bitqueue_push_back& bitqueue, T& max, T& prevmax, std::size_t& prevbits) noexcept {
-        std::size_t const block = std::min(d_block, std::size_t(24));
+        //std::size_t const block = std::min(d_block, 24ul);
+        std::size_t block = std::min(d_block, std::size_t(24));
         Unique_array<T> buffer(block);
         if constexpr (sizeof(T) * 8 < 10)
             bitqueue.push_back<8>(0b11100 + ((sizeof(T) * 8 - 3) << 5));
@@ -1144,23 +1250,23 @@ private:
         else
             bitqueue.push_back<17>(0b11111111100 + ((sizeof(T) * 8 - 17) << 11));
         prevmax = std::numeric_limits<T>::max();
-        prevbits = sizeof(T) * 8 + 1;
+        prevbits = sizeof(T) * 8 + 2;
         for ( ; from < d_size; from += block) {
-            std::size_t index = bitqueue.data() - terse_frame.data();
+            std::size_t index = static_cast<std::size_t>(bitqueue.data() - terse_frame.data());
             if (index > terse_frame.size() - block * sizeof(decltype(*data)) - 2) {
-                terse_frame.resize(1.1 * terse_frame.size() * d_size / from);
+                terse_frame.resize(static_cast<std::size_t>(1.1 * terse_frame.size() * d_size / from));
                 bitqueue.relocate(terse_frame.data() + index);
             }
             std::size_t to = std::min(d_size, from + block);
-            std::transform(data + from, data + to, buffer.begin(), [](T val) {return val + 1;});
-            std::span<T const> unmasked(buffer.begin(), buffer.begin() + to - from);
+            std::transform(data + static_cast<std::ptrdiff_t>(from), data + static_cast<std::ptrdiff_t>(to), buffer.begin(), [](T val) {return val + 1;});
+            std::span<T const> unmasked(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(to - from));
             max = std::ranges::max(unmasked);
             if (max < 7)
                 f_compress_weak_block(unmasked, bitqueue, max, prevmax);
             else
                 f_compress_strong_block(unmasked, bitqueue, f_most_significant_bit(max), prevbits);
             if (to != d_size) {
-                std::span test_for_masked(data + to, data + std::min(d_size, to + block));
+                std::span test_for_masked(data + static_cast<std::ptrdiff_t>(to), std::min(d_size - to, block));
                 if (std::ranges::max(test_for_masked) != std::numeric_limits<T>::max()) {
                     bitqueue.push_back<1>(0); // End masking
                     break;
@@ -1170,11 +1276,11 @@ private:
         }
     }
 
-#define POP(bits, begin, num)                                                    \
+#define POP(T, bits, begin, num)                                                    \
  do { if constexpr (N == 0)                                                      \
         bitqueue.pop(bits, std::span(begin, begin + num));                       \
     else                                                                         \
-        switch (bits + (num != d_block ? 9 : 0)) {                               \
+        switch (bits + (num != static_cast<std::ptrdiff_t>(d_block) ? 9 : 0)) {  \
             case 0: bitqueue.template pop<0>(std::span<T, N>(begin, N)); break;  \
             case 1: bitqueue.template pop<1>(std::span<T, N>(begin, N)); break;  \
             case 2: bitqueue.template pop<2>(std::span<T, N>(begin, N)); break;  \
@@ -1198,12 +1304,13 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
 }
 
     template <std::size_t N, typename Iterator>
-    void f_prolix(Iterator begin, std::size_t frame) noexcept {
+    void f_prolix(Iterator const begin, std::size_t const frame) noexcept {
         Bitqueue_pop bitqueue(f_get_frame(frame));
         std::size_t flag = bitqueue.pop<18, std::size_t>();
         switch (flag) {
             case 0b111111111111111100: return f_prolix_small_unsigned<N>(begin, frame);
             case 0b111111111111111000: return f_prolix_unsigned<N>(begin, frame);
+            case 0b111111111111111010: return f_prolix_float<N>(begin, frame);
             default: return f_prolix_signed<N>(begin, frame);
         }
     }
@@ -1211,45 +1318,76 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
     template <std::size_t N, typename Iterator>
     void f_prolix_signed(Iterator begin, std::size_t frame) noexcept {
         using T = std::iterator_traits<Iterator>::value_type;
-        assert(frame < number_of_frames());
-        if (d_signed) assert(std::is_signed_v<typename std::iterator_traits<Iterator>::value_type>);
         Bitqueue_pop bitqueue(f_get_frame(frame));
         uint8_t significant_bits = 0;
-        for (size_t from = 0; from < d_size; from += d_block) {
+        for (std::size_t from = 0; from < d_size; from += d_block) {
             auto const to = std::min(d_size, from + d_block);
             BITS(significant_bits);
             if constexpr (std::is_integral_v<T>)
-                POP(significant_bits, begin + from, to - from);
+                POP(T, significant_bits, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from));
             else
-                f_pop_into<N>(significant_bits, begin + from, to - from);
+                f_pop_into<N>(bitqueue, significant_bits, begin + from, static_cast<std::ptrdiff_t>(to - from));
         }
     }
 
+    template <std::size_t N, typename Iterator> 
+    void f_prolix_float(Iterator begin, std::size_t frame) noexcept {
+        using T = std::iterator_traits<Iterator>::value_type;
+        Bitqueue_pop bitqueue(f_get_frame(frame));
+        bitqueue.pop<18, std::size_t>();
+        std::uint8_t const binary_precision = bitqueue.pop<6, std::uint8_t>();
+        std::uint8_t significant_bits_exponents = 0;
+        Unique_array<std::int64_t> mantissas(d_block);
+        Unique_array<std::int16_t> exponents(d_block);
+        std::size_t mantissa_bits = (static_cast<std::size_t>(1) << (binary_precision - 1));
+        for (size_t from = 0; from < d_size; from += d_block) {
+            auto const to = std::min(d_size, from + d_block);
+            std::uint8_t unsigned_block = bitqueue.pop<1, std::uint8_t>();
+            BITS(significant_bits_exponents);
+            if (unsigned_block)
+                POP(std::uint64_t, binary_precision - 1, reinterpret_cast<std::uint64_t*>(mantissas.data()), static_cast<std::ptrdiff_t>(to - from));
+            else
+                POP(std::int64_t, binary_precision, mantissas.begin(), static_cast<std::ptrdiff_t>(to - from));
+            POP(std::int16_t, significant_bits_exponents, exponents.begin(), static_cast<std::ptrdiff_t>(to - from));
+            for (std::size_t i = 0; i != static_cast<std::size_t>(to - from); ++i) {
+                if (exponents[i] == 1 << 12) {
+                    if constexpr (std::integral<T>) *begin++ = std::numeric_limits<T>::max();
+                    else *begin++ = std::numeric_limits<T>::quiet_NaN();
+                }
+                else {
+                    double const val = std::ldexp(static_cast<double>(mantissas[i]) / mantissa_bits, exponents[i]);
+                    if constexpr (std::floating_point<T>)
+                        *begin++ = static_cast<T>(val);
+                    else
+                        *begin++ = static_cast<T>(std::round(std::max(std::min(static_cast<double>(std::numeric_limits<T>::max()), val), val)));
+                }
+            }
+        }
+    }
+    
     template <std::size_t N, typename Iterator>
     void f_prolix_unsigned(Iterator begin, std::size_t frame) noexcept {
         using T = std::iterator_traits<Iterator>::value_type;
-        assert(frame < number_of_frames());
-        if (d_signed) assert(std::is_signed_v<typename std::iterator_traits<Iterator>::value_type>);
         Bitqueue_pop bitqueue(f_get_frame(frame));
-        assert((bitqueue.pop<18, std::size_t>() == 0b111111111111111000));
+        bitqueue.pop<18, std::size_t>();
         uint8_t significant_bits = 0;
         uint8_t masked_bits = 0;
-        for (size_t from = 0; from < d_size; from += d_block) {
+        for (std::size_t from = 0; from < d_size; from += d_block) {
             auto const to = std::min(d_size, from + d_block);
             BITS(significant_bits);
             if (significant_bits != d_prolix_bits) {
                 if constexpr (std::is_integral_v<T>)
-                    POP(significant_bits, begin + from, to - from);
+                    POP(T, significant_bits, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from));
                 else
-                    f_pop_into<N>(significant_bits, begin + from, to - from);
+                    f_pop_into<N>(bitqueue, significant_bits, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from));
             }
             else {
                 BITS(masked_bits);
                 if constexpr (std::is_integral_v<T>)
-                    POP(masked_bits, begin + from, to - from);
+                    POP(T, masked_bits, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from));
                 else
-                    f_pop_into<N>(masked_bits, begin + from, to - from);
-                for (std::size_t i = from; i != to; ++i)
+                    f_pop_into<N>(bitqueue, masked_bits, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from));
+                for (std::ptrdiff_t i = static_cast<std::ptrdiff_t>(from); i != static_cast<std::ptrdiff_t>(to); ++i)
                     --begin[i];
             }
         }
@@ -1271,47 +1409,57 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
         else                           prolix_float(uint64_t{});
     }
     
+    constexpr std::size_t f_integer_power(std::size_t base, std::size_t exp) {
+        std::size_t result = 1;
+        while (exp) {
+            if (exp & 1) result *= base;  // If the exponent is odd, multiply by base
+            base *= base;  // Square the base
+            exp >>= 1;  // Divide exponent by 2
+        }
+        return result;
+    }
+    
     template <std::size_t N, typename Iterator> requires std::integral<typename std::iterator_traits<Iterator>::value_type>
     void f_prolix_small_unsigned(Iterator begin, std::size_t frame) noexcept {
         using T = std::iterator_traits<Iterator>::value_type;
+        //std::size_t block = std::min(d_block, 24ul);
         std::size_t block = std::min(d_block, std::size_t(24));
-        if (d_signed) assert(std::is_signed_v<typename std::iterator_traits<Iterator>::value_type>);
         Bitqueue_pop bitqueue(f_get_frame(frame));
-        assert((bitqueue.pop<18, std::size_t>() == 0b111111111111111100));
+        bitqueue.pop<18, std::size_t>();
         uint8_t bits = 0;
         T max = 0;
         for (size_t from = 0; from < d_size; from += block) {
             auto const to = std::min(d_size, from + block);
             f_get_max(bitqueue, max, bits);
             switch (max) {
-                case 0: POP(0, begin + from, to - from); break;
-                case 1: POP(1, begin + from, to - from); break;
+                case 0: POP(T, 0, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from)); break;
+                case 1: POP(T, 1, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from)); break;
                 case 2: {
-                    std::span<T> data_block(begin + from, begin + to);
-                    std::size_t const mult = std::pow(3, block) - 1;
-                    std::size_t val = bitqueue.pop<std::size_t>(f_most_significant_bit(mult));
-                    for (int i = 0; i != data_block.size(); ++i) {
+                    std::span<T> data_block(begin + static_cast<std::ptrdiff_t>(from), begin + static_cast<std::ptrdiff_t>(to));
+                    std::size_t val = bitqueue.pop<std::size_t>(f_most_significant_bit(f_integer_power(3, block) - 1));
+                    for (std::size_t i = 0; i != data_block.size(); ++i) {
                         data_block[i] = val % (3);
                         val /= 3;
                     }
                     break;
                 }
-                case 3: POP(2, begin + from, to - from); break;
-                case 7: POP(3, begin + from, to - from); break;
+                case 3: POP(T, 2, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from)); break;
+                case 7: POP(T, 3, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from)); break;
                 default: {
                     if (max < 7) {
-                        std::span<T> data_block(begin + from, begin + to);
-                        std::size_t const mult = std::pow(max + 1, block) - 1;
+                        std::span<T> data_block(begin + static_cast<std::ptrdiff_t>(from), begin + static_cast<std::ptrdiff_t>(to));
+                        std::size_t const mult = f_integer_power(static_cast<std::size_t>(max) + 1, block) - 1;
                         std::size_t val = bitqueue.pop<std::size_t>(f_most_significant_bit(mult));
-                        for (int i = 0; i != data_block.size(); ++i) {
-                            data_block[i] = val % (max + 1);
-                            val /= max + 1;
+                        for (std::size_t i = 0; i != data_block.size(); ++i) {
+                            auto [quot, rem] = std::div(static_cast<std::ptrdiff_t>(val), static_cast<std::ptrdiff_t>(max + 1));
+                            data_block[i] = static_cast<T>(rem);
+                            val = static_cast<std::size_t>(quot);
                         }
                     }
                     else if (bits == d_prolix_bits)
                         f_prolix_small_unsigned_masked<N>(bitqueue, begin, from, max, bits);
                     else
-                        POP(bits, begin + from, to - from);
+                        POP(T, bits, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from));
                 }
             }
         }
@@ -1320,6 +1468,7 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
     template <std::size_t N, typename Iterator>
     void f_prolix_small_unsigned_masked(Bitqueue_pop& bitqueue, Iterator begin, std::size_t& from, auto& max, auto& bits) noexcept {
         using T = std::iterator_traits<Iterator>::value_type;
+        //std::size_t block = std::min(d_block, 24ul);
         std::size_t block = std::min(d_block, std::size_t(24));
         Unique_array<T> buffer(block);
         bits = 0;
@@ -1327,18 +1476,19 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
             auto const to = std::min(d_size, from + block);
             f_get_max(bitqueue, max, bits);
             if (max >= 7) {
-                POP(bits, begin + from, to - from);
-                max = std::ranges::max(std::span(begin + from, to - from));
-                for (std::size_t i = from; i != to; ++i)
+                POP(T, bits, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from));
+                max = std::ranges::max(std::span(begin + static_cast<std::ptrdiff_t>(from), to - from));
+                for (std::ptrdiff_t i = static_cast<ptrdiff_t>(from); i != static_cast<std::ptrdiff_t>(to); ++i)
                     --begin[i];
             }
             else {
-                std::span<T> data_block(begin + from, begin + to);
-                std::size_t const mult = std::pow(max + 1, block) - 1;
+                std::span<T> data_block(begin + static_cast<std::ptrdiff_t>(from), begin + static_cast<std::ptrdiff_t>(to));
+                std::size_t const mult = f_integer_power(static_cast<std::size_t>(max) + 1, block) - 1;
                 std::size_t val = bitqueue.pop<std::size_t>(f_most_significant_bit(mult));
-                for (int i = 0; i != data_block.size(); ++i) {
-                    --(data_block[i] = val % (max + 1));
-                    val /= max + 1;
+                for (std::size_t i = 0; i != data_block.size(); ++i) {
+                    auto [quot, rem] = std::div(static_cast<std::ptrdiff_t>(val), static_cast<std::ptrdiff_t>(max + 1));
+                    data_block[i] = static_cast<T>(rem) - 1;
+                    val = static_cast<std::size_t>(quot);
                 }
             }
             masked = bitqueue.pop<1, uint8_t>();
@@ -1348,13 +1498,12 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
     }
     
     template <std::size_t N, typename Iterator>
-    void f_pop_into(Bitqueue_pop& bitqueue, uint8_t significant_bits, Iterator begin, std::size_t const num) noexcept {
-        using T = std::iterator_traits<Iterator>::value_type;
-        std::vector<std::int64_t> tmp(num);
+    void f_pop_into(Bitqueue_pop& bitqueue, uint8_t significant_bits, Iterator begin, std::ptrdiff_t const num) noexcept {
+        std::vector<std::int64_t> tmp(static_cast<std::size_t>(num));
         if (is_signed())
-            POP(significant_bits, tmp.data(), num);
+            POP(std::int64_t, significant_bits, tmp.data(), num);
         else
-            POP(significant_bits, reinterpret_cast<std::uint64_t*>(tmp.data()), num);
+            POP(std::uint64_t, significant_bits, reinterpret_cast<std::uint64_t*>(tmp.data()), num);
         std::copy(tmp.begin(), tmp.end(), begin);
     }
     
@@ -1365,7 +1514,7 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
     inline void f_get_max(Bitqueue_pop& bitqueue, T& max, std::uint8_t& bits) const noexcept {
         uint8_t flag = bitqueue.template pop<1,uint8_t>();
         if (flag == 1 && max == 0) return;
-        flag = (flag << 1) + bitqueue.template pop<1,uint8_t>();
+        flag = static_cast<uint8_t>(flag << 1) + bitqueue.template pop<1,uint8_t>();
         if (flag == 0b11) return;
         if (flag == 0b10) {
             --bits;
@@ -1376,7 +1525,7 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
             max = (max == 6) ? max - 2 : max + 1;
         }
         else {
-            max = bits = bitqueue.template pop<3,std::uint8_t>();
+            max = static_cast<T>(bits = bitqueue.template pop<3,std::uint8_t>());
             if (bits == 7) {
                 max = std::numeric_limits<T>::max() / 2;
                 bits = 3 + bitqueue.template pop<3,std::uint8_t>();
@@ -1389,40 +1538,40 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
         }
     }
     
-    template <typename T0, std::size_t N>
-    constexpr inline std::size_t const f_most_significant_bit(std::span<T0,N> const values) const noexcept {
+    template <typename T0, std::size_t N> requires std::integral<T0>
+    constexpr inline std::uint8_t f_most_significant_bit(std::span<T0,N> const values) const noexcept {
         std::size_t setbits = 0;
         if constexpr (std::is_unsigned_v<T0>)
             for (auto const& val : values)
                 setbits |= val;
         else
             for (auto const& val : values)
-                setbits |= (val == -1) ? 1 : std::abs(val) << 1;
+                setbits |= (val == -1) ? std::size_t(1) : static_cast<std::size_t>(std::abs(val)) << 1;
         std::size_t r=0;
         for ( ; setbits; setbits>>=1, ++r);
-        return std::min(r, sizeof(T0) * 8);
+        return static_cast<std::uint8_t>(std::min(r, sizeof(T0) * 8));
     }
     
     template <typename T0>
-    constexpr inline std::size_t const f_most_significant_bit(T0 val) const noexcept {
+    constexpr inline std::uint8_t f_most_significant_bit(T0 val) const noexcept {
         if constexpr (std::is_signed_v<T0>)
             val = (val == -1) ? 1 : std::abs(val) << 1;
         std::size_t r=0;
         for ( ; val; val>>=1, ++r);
-        return std::min(r, sizeof(T0) * 8);
+        return static_cast<std::uint8_t>(std::min(r, sizeof(T0) * 8));
     }
     
     template <typename STREAM> requires std::derived_from<STREAM, std::istream>
     void f_fill_terse_frames(STREAM& istream, std::size_t const number_of_bytes) {
         f_get_frame(0).resize(number_of_bytes);
-        istream.read((char*)&(f_get_frame(0)[0]), number_of_bytes);
+        istream.read(reinterpret_cast<char*>(&(f_get_frame(0)[0])), static_cast<std::ptrdiff_t>(number_of_bytes));
         std::vector<std::size_t> terse_sizes(d_terse_frames.size());
         std::uint8_t const* terse_begin = f_get_frame(0).data();
         for (std::size_t current_frame = 0; current_frame != d_terse_frames.size(); ++current_frame) {
             Bitqueue_pop bitqueue(f_get_frame(0));
             uint8_t significant_bits = 0;
             for (std::size_t from = 0; from < size(); from += d_block) {
-                if (bitqueue.template pop<1,bool>() == 0) {
+                if (bitqueue.template pop<1,uint8_t>() == 0) {
                     significant_bits = bitqueue.template pop<3,uint8_t>();
                     if (significant_bits == 7) {
                         significant_bits += bitqueue.template pop<2,uint8_t>();
@@ -1432,11 +1581,12 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
                 }
                 bitqueue.skip(significant_bits * std::min(static_cast<std::size_t>(d_block), size() - from));
             }
-            terse_sizes[current_frame] = bitqueue - terse_begin;
+            terse_sizes[current_frame] = static_cast<std::size_t>(bitqueue - terse_begin);
             terse_begin += terse_sizes[current_frame];
         }
         std::size_t data_start = terse_sizes[0];
         for (std::size_t frame_num = 1; frame_num != d_terse_frames.size(); ++frame_num) {
+            terse_sizes[frame_num] = ((terse_sizes[frame_num] + sizeof(size_t) - 1) / sizeof(size_t)) * sizeof(size_t);
             f_get_frame(frame_num).resize(terse_sizes[frame_num]);
             std::memcpy(f_get_frame(frame_num).data(), f_get_frame(0).data() + data_start, terse_sizes[frame_num]);
             data_start += terse_sizes[frame_num];

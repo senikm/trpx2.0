@@ -2,18 +2,16 @@
 // Written by: Senik Matinyan, 2024
 //
 
-
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include "Concurrent.hpp"
-#include "Terse_python.hpp"
+#include "Terse.hpp"
 #include <pybind11/functional.h>
 #include <pybind11/numpy.h>
 #include <pybind11/complex.h>
 #include <pybind11/chrono.h>
 #include <fstream>
 #include <future>
-
 
 PYBIND11_MODULE(pyterse, m)
 {
@@ -30,7 +28,7 @@ PYBIND11_MODULE(pyterse, m)
         std::streamsize xsputn(char const* s, std::streamsize const n) override {
             try {
                 py_stream.attr("write")(py::bytes(s, static_cast<size_t>(n)));
-                return n;  // Successfully written bytes
+                return n;  
             }
             catch (const py::error_already_set& e) { throw; }
             catch (const std::exception& e) { throw py::value_error(std::string("[xsputn] Error: ") + e.what()); }
@@ -94,19 +92,34 @@ PYBIND11_MODULE(pyterse, m)
     };
     
     auto select_terse_func = [](py::array& data, auto&& func) {
-        if (data.dtype().kind() != 'i' && data.dtype().kind() != 'u')
-            throw py::type_error("Terse only supports integral types");
-        switch (data.dtype().itemsize()) {
-            case 1: return data.dtype().kind() == 'i' ? func(std::int8_t {}) : func(std::uint8_t {});
-            case 2: return data.dtype().kind() == 'i' ? func(std::int16_t{}) : func(std::uint16_t{});
-            case 4: return data.dtype().kind() == 'i' ? func(std::int32_t{}) : func(std::uint32_t{});
-            case 8: return data.dtype().kind() == 'i' ? func(std::int64_t{}) : func(std::uint64_t{});
-            default:
-                throw py::type_error("Terse only supports compression of integral values with 1, 2, 4 or 8 bytes");
+        // Handle float types
+        if (data.dtype().kind() == 'f') {
+            switch (data.dtype().itemsize()) {
+                case 4: return func(float{});
+                case 8: return func(double{});
+                default:
+                    throw py::type_error("Terse supports float32 and float64 types");
+            }
+        } 
+        else if (data.dtype().kind() == 'i' || data.dtype().kind() == 'u') {
+            switch (data.dtype().itemsize()) {
+                case 1: return data.dtype().kind() == 'i' ? func(std::int8_t {}) : func(std::uint8_t {});
+                case 2: return data.dtype().kind() == 'i' ? func(std::int16_t{}) : func(std::uint16_t{});
+                case 4: return data.dtype().kind() == 'i' ? func(std::int32_t{}) : func(std::uint32_t{});
+                case 8: return data.dtype().kind() == 'i' ? func(std::int64_t{}) : func(std::uint64_t{});
+                default:
+                    throw py::type_error("Terse only supports compression of integral values with 1, 2, 4 or 8 bytes");
+            }
+        }
+        else {
+            throw py::type_error("Terse only supports integral and floating point types");
         }
     };
     
     auto pydtype_of_terse = [&] (Terse<Concurrent>& terse) {
+        if (terse.is_float()) {
+            return py::dtype::of<float>(); 
+        }
         switch (terse.bits_per_val()) {
             case 8 : return terse.is_signed() ? py::dtype::of<int8_t >() : py::dtype::of<uint8_t >();
             case 16: return terse.is_signed() ? py::dtype::of<int16_t>() : py::dtype::of<uint16_t>();
@@ -132,9 +145,8 @@ PYBIND11_MODULE(pyterse, m)
         if (terse.number_of_frames() == 0) terse.dim(dim);
         else if (dim != terse.dim())
             throw py::value_error("Dimension mismatch: Terse cannot insert data because of shape mismatch.");
-        //size_t const frame_size = std::max(static_cast<std::size_t>(shape.back()), std::accumulate(dim.begin(), dim.end(), 1ul, std::multiplies<>()));
         size_t const frame_size = std::max(static_cast<std::size_t>(shape.back()), 
-                                 static_cast<std::size_t>(std::accumulate(dim.begin(), dim.end(), 1ul, std::multiplies<>())));
+            static_cast<std::size_t>(std::accumulate(dim.begin(), dim.end(), 1ul, std::multiplies<>())));
         size_t const num_frames = shape.size() <= 2 ? 1 : shape[0];
         T* base_ptr = static_cast<T*>(buf.ptr);
         for (std::size_t i = 0; i < num_frames; ++i)
@@ -193,7 +205,6 @@ PYBIND11_MODULE(pyterse, m)
         }, py::arg("pos"), py::arg("data"), py::arg("mode") = Terse_mode::Default,
              "Insert data into the Terse object at the specified position.")
     
-
         .def("push_back", [&](Terse<Concurrent>& terse, py::array data, Terse_mode mode) {
             select_terse_func(data, [&](auto Type) { return insert(terse, terse.number_of_frames(), data, mode, Type); });
         }, py::arg("data"), py::arg("mode") = Terse_mode::Default,
@@ -225,12 +236,12 @@ PYBIND11_MODULE(pyterse, m)
         }, py::arg("stream"))
 
         .def("save", [](Terse<Concurrent>& self, const std::string& filename) {
-        std::ofstream outfile(filename, std::ios::binary);
-        if (!outfile.is_open()) {
-            throw std::runtime_error("Failed to open file for writing");
-        }
-        self.write(outfile);
-        outfile.close();
+            std::ofstream outfile(filename, std::ios::binary);
+            if (!outfile.is_open()) {
+                throw std::runtime_error("Failed to open file for writing");
+            }
+            self.write(outfile);
+            outfile.close();
         }, 
         py::arg("filename"),
         "Save Terse data to a file.")
@@ -254,7 +265,7 @@ PYBIND11_MODULE(pyterse, m)
         .def_property_readonly("number_of_bytes", &Terse<Concurrent>::terse_size)
     
         .def("metadata", py::overload_cast<std::size_t>(&Terse<Concurrent>::metadata, py::const_), py::arg("frame") = 0)
-        .def("set_metadata", py::overload_cast<std::size_t, std::string>(&Terse<Concurrent>::metadata),
+        .def("set_metadata", py::overload_cast<std::size_t, std::string const>(&Terse<Concurrent>::metadata),
              py::arg("frame"), py::arg("metadata"))
         .def("dim", py::overload_cast<>(&Terse<Concurrent>::dim, py::const_))
         .def("set_dim", [](Terse<Concurrent>& self, const std::vector<size_t>& dims) {
@@ -262,6 +273,10 @@ PYBIND11_MODULE(pyterse, m)
                 throw py::value_error("The total number of elements must remain unchanged when setting dimensions, unless the Terse object is empty.");
             self.dim(dims);
         }, py::arg("dimensions"))
+        .def("fractional_precision", py::overload_cast<>(&Terse<Concurrent>::fractional_precision, py::const_))
+        .def("set_fractional_precision", [](Terse<Concurrent>& self, double precision) {
+            self.fractional_precision(precision);
+        }, py::arg("precision"))
         .def("block_size", py::overload_cast<>(&Terse<Concurrent>::block_size, py::const_))
         .def("set_block_size", [](Terse<Concurrent>& self, std::size_t block_size) {
             if (self.number_of_frames() > 0)
@@ -275,5 +290,4 @@ PYBIND11_MODULE(pyterse, m)
         .def("dop", py::overload_cast<>(&Terse<Concurrent>::dop, py::const_))
         .def("set_dop", py::overload_cast<double>(&Terse<Concurrent>::dop), py::arg("value"))
         .def("shrink_to_fit", &Terse<Concurrent>::shrink_to_fit);
-        
 }

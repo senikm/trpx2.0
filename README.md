@@ -119,6 +119,10 @@ terse.set_fast(bool)        # Toggle fast compression mode
 terse.set_small(bool)       # Toggle small data optimization
 terse.dop()                 # Degree of parallelism
 terse.set_dop(value)        # Set degree of parallelism (0.0 to 1.0)
+
+# Float data compression
+terse.set_fractional_precision (value)
+terse.fractional_precision() 
 ```
 
 ## Building from source

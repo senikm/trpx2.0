@@ -76,7 +76,7 @@ public:
      *
      * @return The number of cores available for concurrent processing, based on the current degree of parallelism.
      */
-    unsigned const cores() const {
+    unsigned cores() const {
         return std::clamp(unsigned(d_dop * d_cores), 1u, d_cores);
     }
 
@@ -209,11 +209,11 @@ public:
     auto background(Func&& func, Args&&... args) -> std::future<typename std::invoke_result_t<Func, Args...>> {
         using return_type = typename std::invoke_result_t<Func, Args...>;
         auto task = std::make_shared<std::packaged_task<return_type()>>
-        ([func = std::forward<Func>(func), ... args = std::forward<Args>(args)]() mutable {
+        ([captured_func = std::forward<Func>(func), ... captured_args = std::forward<Args>(args)]() mutable {
             if constexpr (std::is_void_v<return_type>)
-                func(std::forward<Args>(args)...);
+                captured_func(std::forward<Args>(captured_args)...);
             else
-                return func(std::forward<Args>(args)...);
+                return captured_func(std::forward<Args>(captured_args)...);
         });
         std::future<return_type> result = task->get_future();
         if (d_dop == 0.0 || !d_thread_pool.f_add_task(*this, [task]() { (*task)(); }))

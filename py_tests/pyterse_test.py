@@ -41,10 +41,6 @@ class TestTerseLibrary(unittest.TestCase):
             np.testing.assert_array_equal(result, data)
             self.assertEqual(result.dtype, data.dtype)
 
-    def test_invalid_data_types(self):
-        """Test handling of invalid data types"""
-        with self.assertRaises(TypeError):
-            Terse(np.array([1.0, 2.0], dtype=np.float32))
 
     def test_dimensions(self):
         """Test handling of different dimensional arrays"""

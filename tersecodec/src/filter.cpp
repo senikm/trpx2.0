@@ -14,7 +14,7 @@
 #include <unordered_map>
 #include <cstring>
 #include "Concurrent.hpp"
-#include "Terse_hdf5.hpp"
+#include "Terse.hpp"
 
 
 #define TERSE_FILTER_ID 32029
@@ -223,3 +223,4 @@ extern "C" H5PL_type_t H5PLget_plugin_type(void) {
 }
 
 
+ 

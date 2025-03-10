@@ -79,7 +79,9 @@ public:
      */
     template <Bitqueue CONTAINER>
     Bitqueue_push_back(CONTAINER& container) noexcept : d_data(container.data()) {
-        assert(d_data == &*container.begin());
+        assert(&*container.begin() == d_data);
+        assert((container.size() * sizeof(*d_data)) % sizeof(std::size_t) == 0 && "Container size must be a multiple of d_buffer size");
+        assert(reinterpret_cast<std::uintptr_t>(d_data) % alignof(std::size_t) == 0 && "Container data must be aligned to the size of d_buffer");
     }
         
     /**
@@ -102,7 +104,7 @@ public:
      * @brief Retrieves the current writable data pointer.
      * @return Pointer to the current writable data buffer.
      */
-    constexpr std::uint8_t* const data() const noexcept { return d_data; }
+    constexpr std::uint8_t* data() const noexcept { return d_data; }
 
     /**
      * @brief Pushes a single value of a compile-time fixed bit width into the buffer.
@@ -123,7 +125,7 @@ public:
      * @param val The value to push into the buffer.
      */
     template <std::integral T>
-    constexpr void push_back(std::size_t const B, T const val) {
+    constexpr void push_back(std::uint8_t const B, T const val) {
         if (B != 0)
             push_back(B, std::span<T const,1>(&val, 1));
     }
@@ -135,14 +137,14 @@ public:
      * @tparam N Size of the span containing the values.
      * @param values Span containing the values to push into the buffer.
      */
-    template <std::size_t B, std::integral T, std::size_t N>
+    template <std::uint8_t B, std::integral T, std::size_t N>
     constexpr void push_back(std::span<T,N> const values) noexcept {
         static_assert(sizeof(T) <= sizeof(std::size_t), "Type too large");
         if constexpr (B != 0) {
             decltype(d_buffer) const mask = ((1ul << B) - 1);
             for (auto const& val : values) {
                 if constexpr (std::is_signed_v<T>)
-                    d_buffer |= static_cast<decltype(d_buffer)>(val & mask) << d_buffered_bits;
+                    d_buffer |= static_cast<decltype(d_buffer)>(static_cast<std::make_unsigned_t<T>>(val) & mask) << d_buffered_bits;
                 else
                     d_buffer |= static_cast<decltype(d_buffer)>(val) << d_buffered_bits;
                 d_buffered_bits += B;
@@ -151,7 +153,7 @@ public:
                     d_data += sizeof(decltype(d_buffer));
                     d_buffered_bits -= sizeof(decltype(d_buffer)) * 8;
                     if constexpr (std::is_signed_v<T>)
-                        d_buffer = static_cast<decltype(d_buffer)>(val & mask) >> (B - d_buffered_bits);
+                        d_buffer = static_cast<decltype(d_buffer)>(static_cast<std::make_unsigned_t<T>>(val) & mask) >> (B - d_buffered_bits);
                     else
                         d_buffer = static_cast<decltype(d_buffer)>(val) >> (B - d_buffered_bits);
                 }
@@ -167,13 +169,14 @@ public:
      * @param values Span containing the values to push into the buffer.
      */
     template <std::integral T, std::size_t N>
-    constexpr void push_back(std::size_t const B, std::span<T,N> const values) noexcept {
+    constexpr void push_back(std::uint8_t const B, std::span<T,N> const values) noexcept {
         static_assert(sizeof(T) <= sizeof(std::size_t), "Type too large");
+        assert(B <= sizeof(T) * 8);
         if (B != 0) {
             decltype(d_buffer) const mask = ((1ul << B) - 1);
             for (auto const& val : values) {
                 if constexpr (std::is_signed_v<T>)
-                    d_buffer |= static_cast<decltype(d_buffer)>(val & mask) << d_buffered_bits;
+                    d_buffer |= static_cast<decltype(d_buffer)>(static_cast<std::make_unsigned_t<T>>(val) & mask) << d_buffered_bits;
                 else
                     d_buffer |= static_cast<decltype(d_buffer)>(val) << d_buffered_bits;
                 d_buffered_bits += B;
@@ -182,7 +185,7 @@ public:
                     d_data += sizeof(decltype(d_buffer));
                     d_buffered_bits -= sizeof(decltype(d_buffer)) * 8;
                     if constexpr (std::is_signed_v<T>)
-                        d_buffer = static_cast<decltype(d_buffer)>(val & mask) >> (B - d_buffered_bits);
+                        d_buffer = static_cast<decltype(d_buffer)>(static_cast<std::make_unsigned_t<T>>(val) & mask) >> (B - d_buffered_bits);
                     else
                         d_buffer = static_cast<decltype(d_buffer)>(val) >> (B - d_buffered_bits);
                 }
@@ -195,7 +198,7 @@ public:
      * @param p Pointer to compare the current position against.
      * @return Distance in bytes between the current position and the pointer.
      */
-    constexpr std::size_t operator-(std::uint8_t const* p) const noexcept { return d_data + (d_buffered_bits + 7) / 8 - p; }
+    constexpr std::ptrdiff_t operator-(std::uint8_t const* p) const noexcept { return d_data + (d_buffered_bits + 7) / 8 - p; }
     
 private:
     std::uint8_t *d_data;
@@ -234,9 +237,10 @@ public:
     template <Bitqueue CONTAINER>
     Bitqueue_pop(CONTAINER const& container) noexcept : d_data(container.data()) {
         assert(&*container.begin() == d_data);
-        std::memcpy(&d_buffer, d_data, sizeof(std::size_t));
+        assert((container.size() * sizeof(*d_data)) % sizeof(std::size_t) == 0 && "Container size must be a multiple of d_buffer size");
+        assert(reinterpret_cast<std::uintptr_t>(d_data) % alignof(std::size_t) == 0 && "Container data must be aligned to the size of d_buffer");
+        std::memcpy(&d_buffer, d_data, std::min(container.size() * sizeof(*d_data), sizeof(std::size_t)));
     }
-    
     /**
      * @brief Retrieves the current readable data pointer.
      * @return Pointer to the current readable data buffer.
@@ -268,7 +272,7 @@ public:
      * @return The value popped from the buffer.
      */
     template <std::integral T>
-    constexpr T pop(std::size_t B) noexcept {
+    constexpr T pop(std::uint8_t B) noexcept {
         static_assert(sizeof(T) <= sizeof(std::size_t), "Type too large");
         if (B == 0)
             return 0;
@@ -287,7 +291,7 @@ public:
      * @param values Span to store the popped values.
      */
     template <std::integral T, std::size_t N>
-    constexpr void pop(std::size_t const B, std::span<T,N> values) noexcept {
+    constexpr void pop(std::uint8_t const B, std::span<T,N> values) noexcept {
         assert(B <= 8 * sizeof(T)); // More bits requested than depth of T: B too large
         if (B==0)
             std::fill(values.begin(), values.end(), 0);
@@ -298,7 +302,7 @@ public:
                 p = static_cast<T>(d_buffer);
                 if (B <= d_buffered_bits){
                     if (B == 8 * sizeof(decltype(d_buffer)))
-                        d_buffered_bits = d_buffer = 0;
+                        d_buffer = d_buffered_bits = 0;
                     else {
                         d_buffer >>= B;
                         d_buffered_bits -= B;
@@ -326,14 +330,12 @@ public:
      * @tparam N Size of the span for storing the values.
      * @param values Span to store the popped values.
      */
-    template <std::size_t B, std::integral T, std::size_t N>
+    template <std::uint8_t B, std::integral T, std::size_t N> requires (!std::is_same_v<T, bool>)
     constexpr void pop(std::span<T,N> values) noexcept {
         assert(B <= 8 * sizeof(T)); // More bits requested than depth of T: B too large
         if constexpr (B==0)
             std::fill(values.begin(), values.end(), 0);
         else {
-            constexpr T mask = static_cast<T>((1ul << B) - 1);
-            constexpr T is_negative = std::is_unsigned_v<T> ? T(0) : T(T(1) << (B - 1));
             for (auto& p : values) {
                 p = static_cast<T>(d_buffer);
                 if (B <= d_buffered_bits){
@@ -352,8 +354,10 @@ public:
                     d_buffered_bits = sizeof(decltype(d_buffer)) * 8 + d_buffered_bits - B;
                 }
                 if constexpr (B != 8 * sizeof(T)) {
-                    if (p & is_negative) p |= ~mask;
-                    else p &= mask;
+                    constexpr T is_negative = std::is_unsigned_v<T> ? T(0) : T(T(1) << (B - 1));
+                    constexpr auto mask = static_cast<std::make_unsigned_t<T>>((1ul << B) - 1);
+                    if (p & is_negative) p |= static_cast<T>(~mask);
+                    else p &= static_cast<T>(mask);
                 }
             }
         }
@@ -391,7 +395,7 @@ public:
      * @param p Pointer to compare the current position against.
      * @return Distance in bytes between the current position and the pointer.
      */
-    constexpr std::size_t operator-(std::uint8_t const* p) const noexcept { return d_data + (d_buffered_bits + 7) / 8 - p; }
+    constexpr std::ptrdiff_t operator-(std::uint8_t const* p) const noexcept { return d_data + (d_buffered_bits + 7) / 8 - p; }
 
 private:
     std::uint8_t const* d_data;
