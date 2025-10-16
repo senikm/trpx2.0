@@ -198,3 +198,30 @@ Data successfully compressed and decompressed with TERSE filter.
 echo 'export HDF5_PLUGIN_PATH=/path/to/hdf5_filter/build/src' >> ~/.bashrc
 source ~/.bashrc
 ```
+
+# Fiji/ImageJ plugin for .trpx format files
+
+
+> For compilation, use the Java version that came with Fiji, to ensure Java compatibility. Also make sure the ij-1.??.jar package is included in the compilation:
+> For example, compile with:
+
+```bash
+    Applications/Fiji.app/java/macosx/zulu8.60.0.21-ca-fx-jdk8.0.322-macosx_x64/jre/Contents/Home/bin/javac -cp /Applications/Fiji.app/jars/ij-1.53t.jar TRPX_Reader.java
+```
+> Then create the .jar files with:
+```bash
+    Applications/Fiji.app/java/macosx/zulu8.60.0.21-ca-fx-jdk8.0.322-macosx_x64/jre/Contents/Home/bin/jar -cvf Terse_Reader.jar TRPX_Reader*.class
+```
+> Then copy Terse_Reader.jar to the "plugins" directory of Fiji:
+```bash
+    cp TRPX_Reader.jar /Applications/Fiji.app/plugins/.
+```
+> Then restart Fiji, and Terse Reader is in the plugins menu.
+
+# Reading TRPX files with DIALS
+
+> Please, install Pyterse package with the following command before reading single TRPX files in DIALS:
+
+```bash
+dials.python -m pip install pyterse
+```
