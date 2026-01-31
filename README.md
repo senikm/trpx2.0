@@ -225,3 +225,21 @@ source ~/.bashrc
 ```bash
 dials.python -m pip install pyterse
 ```
+
+## Citation
+
+**If you use our software in your research, please cite our paper using the following BibTeX entry**:
+
+```bibtex
+@article{MATINYAN2026114298,
+    title = {TRPXv2.0: superfast, parallel compression of diffraction patterns and images, with native Python and HDF5 support},
+    journal = {Ultramicroscopy},
+    volume = {281},
+    pages = {114298},
+    year = {2026},
+    issn = {0304-3991},
+    doi = {https://doi.org/10.1016/j.ultramic.2025.114298},
+    url = {https://www.sciencedirect.com/science/article/pii/S0304399125001962},
+    author = {S. Matinyan and P. Filipcik and D.G. Waterman and C.D. Owen and J.P. Abrahams}
+}
+```
