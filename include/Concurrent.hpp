@@ -11,6 +11,7 @@
 #include <vector>
 #include <atomic>
 #include <list>
+#include <optional>
 
 namespace jpa {
 /**

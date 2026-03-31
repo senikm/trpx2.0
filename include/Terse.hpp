@@ -19,6 +19,9 @@
 #include <future>
 #include <algorithm>
 #include <type_traits>
+#include <optional>
+#include <variant>
+#include <cmath>
 #include "Bitqueue.hpp"
 #include "Unique_array.hpp"
 #include "XML_element.hpp"
