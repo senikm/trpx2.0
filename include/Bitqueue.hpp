@@ -10,6 +10,7 @@
 
 #include "Shared_array.hpp"
 #include <cassert>
+#include <cstring>
 #include <bit>
 #include <numeric>
 #include <vector>
