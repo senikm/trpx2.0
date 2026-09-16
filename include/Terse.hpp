@@ -1150,9 +1150,9 @@ private:
             bitqueue.push_back<1>(0b1);
         else if (previous_maxval == maxval)
             bitqueue.push_back<2>(0b11);
-        else if (previous_maxval + 1 == maxval)
+        else if (previous_maxval < maxval && previous_maxval + 1 == maxval)
             bitqueue.push_back<2>(0b10);
-        else if (maxval != 6 && previous_maxval - 1 == maxval)
+        else if (maxval != 6 && previous_maxval > maxval && previous_maxval - 1 == maxval)
             bitqueue.push_back<2>(0b01);
         else if (previous_maxval == 6 && maxval == 4)
             bitqueue.push_back<2>(0b10);
@@ -1264,10 +1264,14 @@ private:
             std::transform(data + static_cast<std::ptrdiff_t>(from), data + static_cast<std::ptrdiff_t>(to), buffer.begin(), [](T val) {return val + 1;});
             std::span<T const> unmasked(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(to - from));
             max = std::ranges::max(unmasked);
-            if (max < 7)
+            if (max < 7) {
                 f_compress_weak_block(unmasked, bitqueue, max, prevmax);
-            else
+                prevbits = 65;
+            }
+            else {
                 f_compress_strong_block(unmasked, bitqueue, f_most_significant_bit(max), prevbits);
+                prevmax = max;
+            }
             if (to != d_size) {
                 std::span test_for_masked(data + static_cast<std::ptrdiff_t>(to), std::min(d_size - to, block));
                 if (std::ranges::max(test_for_masked) != std::numeric_limits<T>::max()) {
