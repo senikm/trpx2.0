@@ -191,7 +191,7 @@ public:
      */
     Concurrent(Deg_of_parallelism dop) : d_dop(dop) {
         if (d_dop > 0)
-            d_unique_id = d_thread_pool.f_get_unique_id();
+            d_unique_id = d_thread_pool().f_get_unique_id();
     }
 
     /**
@@ -217,7 +217,7 @@ public:
                 return captured_func(std::forward<Args>(captured_args)...);
         });
         std::future<return_type> result = task->get_future();
-        if (d_dop == 0.0 || !d_thread_pool.f_add_task(*this, [task]() { (*task)(); }))
+        if (d_dop == 0.0 || !d_thread_pool().f_add_task(*this, [task]() { (*task)(); }))
             (*task)();  // Execute the task immediately
         return result;
     }
@@ -240,12 +240,12 @@ public:
     unsigned running_tasks() const {
         unsigned task_count = 0;
         {
-            std::lock_guard<std::mutex> lock(d_thread_pool.d_mutex);
-            for (const auto& task : d_thread_pool.d_task_queue)
+            std::lock_guard<std::mutex> lock(d_thread_pool().d_mutex);
+            for (const auto& task : d_thread_pool().d_task_queue)
                 if (std::get<2>(task) == d_unique_id)
                     ++task_count;
-            if (d_thread_pool.d_running_tasks.count(d_unique_id))
-                task_count += d_thread_pool.d_running_tasks.at(d_unique_id);
+            if (d_thread_pool().d_running_tasks.count(d_unique_id))
+                task_count += d_thread_pool().d_running_tasks.at(d_unique_id);
         }
         return task_count;
     }
@@ -262,7 +262,7 @@ private:
     Deg_of_parallelism d_dop;
     std::size_t d_unique_id = 0;
 
-    inline static class c_Global_thread_pool {
+    class c_Global_thread_pool {
         friend class Concurrent;
 
         unsigned const d_max_threads = std::max(1u, std::thread::hardware_concurrency() - 1);
@@ -358,7 +358,14 @@ private:
                 }
             }
         }
-    } d_thread_pool;
+    };
+
+    // The global thread pool is created on first use instead of at program
+    // start-up, so that merely including this header does not spawn threads.
+    static c_Global_thread_pool& d_thread_pool() {
+        static c_Global_thread_pool pool;
+        return pool;
+    }
 };
 
 /**
