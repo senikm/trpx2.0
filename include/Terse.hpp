@@ -460,7 +460,7 @@ public:
             d_terse_frames.insert(at, d_concurrent->background([this, d = std::move(data), mode] { return f_compress(mode, d.data()); }));
         else {
             d_terse_frames.insert(at, f_compress(mode, data.data()));
-            auto local_data = std::move(data);
+            [[maybe_unused]] auto local_data = std::move(data);
         }
     }
 
