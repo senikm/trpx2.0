@@ -731,7 +731,7 @@ public:
      * @throws std::invalid_argument If the provided dimensions differ from dimensions that were set earlier.
      */
     void dim(std::vector<std::size_t> const& dim) {
-        if (d_dim.size() == 0 || size() == std::accumulate(dim.begin(), dim.end(), 1ul, std::multiplies<>()))
+        if (d_dim.size() == 0 || size() == std::accumulate(dim.begin(), dim.end(), std::size_t{1}, std::multiplies<>()))
             d_dim = dim;
         if (dim != d_dim)
             throw std::invalid_argument("Dimensions already set.");
