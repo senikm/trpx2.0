@@ -1232,7 +1232,7 @@ private:
                 }
             }
         }
-        terse_frame_size = static_cast<std::size_t>(bitqueue - terse_frame.data());
+        terse_frame_size = static_cast<std::size_t>(bitqueue - terse_frame.data()) + 8;
         terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
         terse_frame.resize(terse_frame_size);
         return terse_frame;
@@ -1439,7 +1439,7 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
                 case 1: POP(T, 1, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from)); break;
                 case 2: {
                     std::span<T> data_block(begin + static_cast<std::ptrdiff_t>(from), begin + static_cast<std::ptrdiff_t>(to));
-                    std::size_t val = bitqueue.pop<std::size_t>(f_most_significant_bit(f_integer_power(3, block) - 1));
+                    std::size_t val = bitqueue.pop<std::size_t>(f_most_significant_bit(f_integer_power(3, data_block.size()) - 1));
                     for (std::size_t i = 0; i != data_block.size(); ++i) {
                         data_block[i] = val % (3);
                         val /= 3;
@@ -1451,7 +1451,7 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
                 default: {
                     if (max < 7) {
                         std::span<T> data_block(begin + static_cast<std::ptrdiff_t>(from), begin + static_cast<std::ptrdiff_t>(to));
-                        std::size_t const mult = f_integer_power(static_cast<std::size_t>(max) + 1, block) - 1;
+                        std::size_t const mult = f_integer_power(static_cast<std::size_t>(max) + 1, data_block.size()) - 1;
                         std::size_t val = bitqueue.pop<std::size_t>(f_most_significant_bit(mult));
                         for (std::size_t i = 0; i != data_block.size(); ++i) {
                             auto [quot, rem] = std::div(static_cast<std::ptrdiff_t>(val), static_cast<std::ptrdiff_t>(max + 1));
@@ -1486,7 +1486,7 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
             }
             else {
                 std::span<T> data_block(begin + static_cast<std::ptrdiff_t>(from), begin + static_cast<std::ptrdiff_t>(to));
-                std::size_t const mult = f_integer_power(static_cast<std::size_t>(max) + 1, block) - 1;
+                std::size_t const mult = f_integer_power(static_cast<std::size_t>(max) + 1, data_block.size()) - 1;
                 std::size_t val = bitqueue.pop<std::size_t>(f_most_significant_bit(mult));
                 for (std::size_t i = 0; i != data_block.size(); ++i) {
                     auto [quot, rem] = std::div(static_cast<std::ptrdiff_t>(val), static_cast<std::ptrdiff_t>(max + 1));
