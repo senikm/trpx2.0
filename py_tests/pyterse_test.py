@@ -86,6 +86,23 @@ class TestTerseLibrary(unittest.TestCase):
         terse.set_metadata(0, test_metadata)
         self.assertEqual(terse.metadata(0), test_metadata)
 
+    def test_stream_metadata(self):
+        """Test reading metadata from a stream"""
+        # A short string is stored in the std::string object itself, a long
+        # one in memory allocated by it.
+        metadata = ["<m>short</m>", "<metadata>" + "long " * 20 + "</metadata>"]
+        data = np.arange(2 * 24, dtype=np.uint16).reshape(2, 24)
+        terse = Terse()
+        for frame, frame_metadata in zip(data, metadata):
+            terse.push_back(frame)
+            terse.set_metadata(terse.number_of_frames - 1, frame_metadata)
+        stream = io.BytesIO()
+        terse.write(stream)
+        stream.seek(0)
+        terse_read = Terse(stream)
+        self.assertEqual([terse_read.metadata(i) for i in range(2)], metadata)
+        np.testing.assert_array_equal(terse_read.prolix(), data)
+
     def test_dimension_operations(self):
         """Test dimension-related operations"""
         terse = Terse(self.test_data_2d)
