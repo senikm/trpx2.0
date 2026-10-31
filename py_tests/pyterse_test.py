@@ -1,6 +1,7 @@
 import unittest
 import numpy as np
 import io
+import re
 import shutil
 import sys
 import os
@@ -78,6 +79,27 @@ class TestTerseLibrary(unittest.TestCase):
         for mode in [TerseMode.SIGNED, TerseMode.UNSIGNED, TerseMode.SMALL_UNSIGNED, TerseMode.DEFAULT]:
             terse = Terse(data, mode)
             np.testing.assert_array_equal(terse.prolix(), data)
+
+    def test_header_value_lists(self):
+        """Test the lists of values in the header"""
+        # The values are separated by spaces, without a space after the last
+        # value. Writing them compared with the end iterator advanced past the
+        # end (undefined behaviour), which was always true and added a space.
+        data = np.arange(2 * 24, dtype=np.uint16).reshape(2, 24)
+        terse = Terse()
+        for frame in data:
+            terse.push_back(frame)
+        stream = io.BytesIO()
+        terse.write(stream)
+        header = stream.getvalue().split(b"/>")[0].decode()
+        self.assertIn('dimensions="24"', header)
+        self.assertNotRegex(header, r'\s"')
+        # Headers written with a space after the last value are read as well.
+        old = re.sub(rb'(dimensions|memory_sizes_of_frames|metadata_string_sizes)="([^"]*)"', rb'\1="\2 "',
+                     stream.getvalue(), count=3)
+        self.assertNotEqual(old, stream.getvalue())
+        for value in [stream.getvalue(), old]:
+            np.testing.assert_array_equal(Terse(io.BytesIO(value)).prolix(), data)
 
     def test_frame_operations(self):
         """Test frame-based operations"""
