@@ -112,6 +112,25 @@ class TestTerseLibrary(unittest.TestCase):
         terse_read = Terse(stream)
         np.testing.assert_array_equal(terse_read.prolix(), self.test_data_1d)
 
+    def test_saturated_module_gaps(self):
+        """Test round trip of an image with saturated module gaps"""
+        # An Eiger 4M like image of small Poisson distributed values with
+        # module gaps set to the maximum value. With 2166 instead of 2167 rows
+        # the number of values is a multiple of the block size of 12.
+        rng = np.random.default_rng(0)
+        image = rng.poisson(5.0, size=(2166, 2070))
+        gaps = (np.arange(2166) % 551 >= 514)[:, None] | (np.arange(2070) % 1040 >= 1030)
+        for dtype in [np.uint16, np.uint32]:
+            data = np.where(gaps, np.iinfo(dtype).max, image).astype(dtype)
+            np.testing.assert_array_equal(Terse(data).prolix(), data)
+
+    def test_saturated_block_followed_by_small_values(self):
+        """Test round trip of a saturated block followed by blocks of small values"""
+        # The maximum value + 1 wraps around to 0 for 32 bit values.
+        for dtype in [np.uint16, np.uint32]:
+            data = np.repeat(np.array([np.iinfo(dtype).max, 0, 1, 0, 2], dtype=dtype), 12)
+            np.testing.assert_array_equal(Terse(data).prolix(), data)
+
     def test_compression_settings(self):
         """Test compression settings"""
         terse = Terse()
