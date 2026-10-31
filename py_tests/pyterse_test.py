@@ -4,6 +4,7 @@ import io
 import shutil
 import sys
 import os
+import subprocess
 
 for root, dirs, files in os.walk('.'):
     if '__pycache__' in dirs:
@@ -111,6 +112,21 @@ class TestTerseLibrary(unittest.TestCase):
         stream.seek(0)
         terse_read = Terse(stream)
         np.testing.assert_array_equal(terse_read.prolix(), self.test_data_1d)
+
+    @unittest.skipUnless(os.path.isdir("/proc/self/task"), "requires /proc/self/task (Linux)")
+    def test_import_starts_no_threads(self):
+        """Test that importing pyterse does not start the thread pool"""
+        # The thread pool used to be created at program start-up, i.e. by
+        # loading the module, instead of when it is used first.
+        code = ("import os, sys, numpy\n"
+                "sys.path.insert(0, sys.argv[1])\n"
+                "before = len(os.listdir('/proc/self/task'))\n"
+                "import pyterse\n"
+                "print(before, len(os.listdir('/proc/self/task')))\n")
+        path = os.path.dirname(sys.modules["pyterse"].__file__)
+        before, after = subprocess.run([sys.executable, "-c", code, path], check=True, capture_output=True,
+                                       text=True).stdout.split()
+        self.assertEqual(after, before)
 
     def test_compression_settings(self):
         """Test compression settings"""
