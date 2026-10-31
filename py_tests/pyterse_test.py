@@ -218,6 +218,19 @@ class TestTerseLibrary(unittest.TestCase):
                 data[rng.random(n) < 0.125] = np.iinfo(dtype).max
                 np.testing.assert_array_equal(Terse(data, TerseMode.UNSIGNED).prolix(), data)
 
+    def test_full_range_32_bit_values(self):
+        """Test round trip of 32 bit values using all bits"""
+        # The bit masks were computed with (1ul << bits) - 1, which is
+        # undefined for 32 bits where unsigned long has 32 bits (Windows).
+        # Signed 32 bit values then came back wrong.
+        rng = np.random.default_rng(0)
+        for dtype, modes in [(np.uint32, [TerseMode.DEFAULT, TerseMode.UNSIGNED]),
+                             (np.int32, [TerseMode.DEFAULT, TerseMode.SIGNED])]:
+            info = np.iinfo(dtype)
+            data = rng.integers(info.min, info.max, size=1200, endpoint=True, dtype=dtype)
+            for mode in modes:
+                np.testing.assert_array_equal(Terse(data, mode).prolix(), data)
+
     def test_error_handling(self):
         """Test error handling"""
         terse = Terse(self.test_data_1d)
