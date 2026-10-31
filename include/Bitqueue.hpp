@@ -10,6 +10,7 @@
 
 #include "Shared_array.hpp"
 #include <cassert>
+#include <cstring>
 #include <bit>
 #include <numeric>
 #include <vector>
@@ -256,7 +257,7 @@ public:
     template <std::size_t B, std::integral T>
     constexpr T pop() noexcept {
         static_assert(sizeof(T) <= sizeof(decltype(d_buffer)), "Type too large");
-        if (B == 0)
+        if constexpr (B == 0)
             return 0;
         else {
             T val;
@@ -294,7 +295,7 @@ public:
     constexpr void pop(std::uint8_t const B, std::span<T,N> values) noexcept {
         assert(B <= 8 * sizeof(T)); // More bits requested than depth of T: B too large
         if (B==0)
-            std::fill(values.begin(), values.end(), 0);
+            std::fill(values.begin(), values.end(), T{0});
         else {
             T const mask = static_cast<T>((1ul << B) - 1);
             T const is_negative = std::is_unsigned_v<T> ? T(0) : T(T(1) << (B - 1));
@@ -334,7 +335,7 @@ public:
     constexpr void pop(std::span<T,N> values) noexcept {
         assert(B <= 8 * sizeof(T)); // More bits requested than depth of T: B too large
         if constexpr (B==0)
-            std::fill(values.begin(), values.end(), 0);
+            std::fill(values.begin(), values.end(), T{0});
         else {
             for (auto& p : values) {
                 p = static_cast<T>(d_buffer);
@@ -370,7 +371,7 @@ public:
     template <std::size_t B>
     constexpr void skip() {
         if (B <= d_buffered_bits)
-            d_buffered_bits -= B;
+            d_buffered_bits -= static_cast<std::uint8_t>(B);
         else {
             d_data += sizeof(std::size_t) + B / (sizeof(std::size_t) * 8) ;
             d_buffered_bits = (sizeof(std::size_t) * 8) - (B % (sizeof(std::size_t) * 8));
@@ -383,7 +384,7 @@ public:
      */
     constexpr void skip(std::size_t const B) {
         if (B <= d_buffered_bits)
-            d_buffered_bits -= B;
+            d_buffered_bits -= static_cast<std::uint8_t>(B);
         else {
             d_data += sizeof(std::size_t) + B / (sizeof(std::size_t) * 8) ;
             d_buffered_bits = (sizeof(std::size_t) * 8) - (B % (sizeof(std::size_t) * 8));

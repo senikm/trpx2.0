@@ -93,13 +93,13 @@ public:
     /// \param size The size of the array to create.
     /// \note This constructor is only available for dynamic arrays (N == std::dynamic_extent).
     explicit Shared_array(std::size_t size) noexcept requires (N == std::dynamic_extent) :
-    std::shared_ptr<std::byte[]>(std::make_shared_for_overwrite<std::byte[]>(size * sizeof(T))),
+    std::shared_ptr<std::byte[]>(new std::byte[size * sizeof(T)]),
     std::span<T, N>(reinterpret_cast<T*>(this->get()), size) {}
     
     /// \brief Default constructor for a fixed-size array.
     /// \note This constructor is only available for fixed-size arrays (N != std::dynamic_extent).
     constexpr Shared_array() noexcept requires (N != std::dynamic_extent) :
-    std::shared_ptr<std::byte[]>(std::make_shared_for_overwrite<std::byte[]>(N * sizeof(T))),
+    std::shared_ptr<std::byte[]>(new std::byte[N * sizeof(T)]),
     std::span<T, N>(reinterpret_cast<std::array<T,N>&>(*this->get())) {}
     
     /// \brief Constructor to create a dynamic Shared_array from another fixed Shared_array of a different type.
