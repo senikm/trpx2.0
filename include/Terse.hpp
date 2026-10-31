@@ -1079,7 +1079,7 @@ private:
                 if (significant_bits != sizeof(T) * 8)
                     bitqueue.push_back(significant_bits, data_block);
                 else { // masked data
-                    std::transform(data_block.begin(), data_block.end(), buffer.begin(), [](T val) {return val + 1;});
+                    std::transform(data_block.begin(), data_block.end(), buffer.begin(), [](T val) {return static_cast<T>(val + 1);});
                     std::uint8_t masked_bits = f_most_significant_bit(std::span(buffer.begin(), buffer.end()));
                     PUSH_BITS(prevmasked_bits, masked_bits);
                     bitqueue.push_back(masked_bits, buffer);
@@ -1261,7 +1261,7 @@ private:
                 bitqueue.relocate(terse_frame.data() + index);
             }
             std::size_t to = std::min(d_size, from + block);
-            std::transform(data + static_cast<std::ptrdiff_t>(from), data + static_cast<std::ptrdiff_t>(to), buffer.begin(), [](T val) {return val + 1;});
+            std::transform(data + static_cast<std::ptrdiff_t>(from), data + static_cast<std::ptrdiff_t>(to), buffer.begin(), [](T val) {return static_cast<T>(val + 1);});
             std::span<T const> unmasked(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(to - from));
             max = std::ranges::max(unmasked);
             if (max < 7)
