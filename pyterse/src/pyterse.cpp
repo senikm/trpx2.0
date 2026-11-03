@@ -235,7 +235,7 @@
          else if (dim != terse.dim())
              throw py::value_error("Dimension mismatch: Terse cannot insert data because of shape mismatch.");
          size_t const frame_size = std::max(static_cast<std::size_t>(shape.back()), 
-             static_cast<std::size_t>(std::accumulate(dim.begin(), dim.end(), 1ul, std::multiplies<>())));
+             static_cast<std::size_t>(std::accumulate(dim.begin(), dim.end(), std::size_t{1}, std::multiplies<>())));
          size_t const num_frames = shape.size() <= 2 ? 1 : shape[0];
          T* base_ptr = static_cast<T*>(buf.ptr);
          for (std::size_t i = 0; i < num_frames; ++i)
@@ -386,7 +386,7 @@
          .def("dim", py::overload_cast<>(&Terse<Concurrent>::dim, py::const_),
               "Get the dimensions of the frames.")
          .def("set_dim", [](Terse<Concurrent>& self, const std::vector<size_t>& dims) {
-             if (!self.dim().empty() && std::accumulate(dims.begin(), dims.end(), 1ul, std::multiplies<>()) != self.size())
+             if (!self.dim().empty() && std::accumulate(dims.begin(), dims.end(), std::size_t{1}, std::multiplies<>()) != self.size())
                  throw py::value_error("The total number of elements must remain unchanged when setting dimensions, unless the Terse object is empty.");
              self.dim(dims);
          }, py::arg("dimensions"),
