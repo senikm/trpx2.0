@@ -17,6 +17,15 @@
 #include "Unique_array.hpp"
 #include "XML_element.hpp"
 
+// Terse<Concurrent> holds std::future objects and must report that it cannot be copied, otherwise pybind11
+// tries to copy it and fails to compile (https://github.com/senikm/trpx2.0/issues/1).
+static_assert(!std::is_copy_constructible_v<jpa::Terse<jpa::Concurrent>>);
+static_assert(!std::is_copy_assignable_v<jpa::Terse<jpa::Concurrent>>);
+static_assert(std::is_move_constructible_v<jpa::Terse<jpa::Concurrent>>);
+static_assert(std::is_move_assignable_v<jpa::Terse<jpa::Concurrent>>);
+static_assert(std::is_copy_constructible_v<jpa::Terse<>>);
+static_assert(std::is_copy_assignable_v<jpa::Terse<>>);
+
 template <typename T, typename CONCURRENT>
 bool round_trip(char const* name, jpa::Terse_mode mode, char const* mode_name) {
     // Two frames of 48 values (a multiple of the block size of 12).

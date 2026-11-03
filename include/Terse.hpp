@@ -304,6 +304,26 @@ concept Container = requires(T& c) {
 
 class Concurrent;
 
+namespace detail {
+struct Terse_copyable {};
+
+/**
+ * @brief Empty base class that makes Terse<Concurrent> move-only.
+ *
+ * Terse<Concurrent> stores frames that are still being compressed as std::future objects, which cannot be
+ * copied. Without this base, the implicitly declared copy constructor and copy assignment would not be deleted
+ * (std::vector does not constrain its copy operations), so std::is_copy_constructible would report true and
+ * code that relies on it (e.g. pybind11) would fail to compile when it tries to copy.
+ */
+struct Terse_move_only {
+    Terse_move_only() = default;
+    Terse_move_only(Terse_move_only const&) = delete;
+    Terse_move_only& operator=(Terse_move_only const&) = delete;
+    Terse_move_only(Terse_move_only&&) = default;
+    Terse_move_only& operator=(Terse_move_only&&) = default;
+};
+} // end namespace detail
+
 /**
  * @enum Terse_mode
  * @brief Defines the modes used for encoding data in a Terse object.
@@ -335,7 +355,7 @@ enum class Terse_mode {
 };
 
 template<typename CONCURRENT = void>
-class Terse {
+class Terse : private std::conditional_t<std::is_same_v<CONCURRENT, Concurrent>, detail::Terse_move_only, detail::Terse_copyable> {
     static_assert(std::is_same_v<CONCURRENT, void> || std::is_same_v<CONCURRENT, Concurrent>, "Terse is either Concurrent or not");
 #ifndef Concurrent_h
     static_assert(std::is_same_v<CONCURRENT, void>, "Concurrent.hpp must be included before #include \"Terse.hpp\"");
