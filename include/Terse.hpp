@@ -975,7 +975,7 @@ private:
                 unsigned int val;
                 while (meta_str >> val) {
                     d_metadata.push_back(std::string(val, ' '));
-                    istream.read(reinterpret_cast<char*>(&d_metadata.back()), val);
+                    istream.read(d_metadata.back().data(), val);
                 }
             }
             d_terse_frames.resize(std::stoull(xmle.attribute("number_of_frames")));
