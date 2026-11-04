@@ -142,7 +142,7 @@ public:
     constexpr void push_back(std::span<T,N> const values) noexcept {
         static_assert(sizeof(T) <= sizeof(std::size_t), "Type too large");
         if constexpr (B != 0) {
-            decltype(d_buffer) const mask = ((1ul << B) - 1);
+            decltype(d_buffer) const mask = ~decltype(d_buffer){0} >> (sizeof(decltype(d_buffer)) * 8 - B);
             for (auto const& val : values) {
                 if constexpr (std::is_signed_v<T>)
                     d_buffer |= static_cast<decltype(d_buffer)>(static_cast<std::make_unsigned_t<T>>(val) & mask) << d_buffered_bits;
@@ -174,7 +174,7 @@ public:
         static_assert(sizeof(T) <= sizeof(std::size_t), "Type too large");
         assert(B <= sizeof(T) * 8);
         if (B != 0) {
-            decltype(d_buffer) const mask = ((1ul << B) - 1);
+            decltype(d_buffer) const mask = ~decltype(d_buffer){0} >> (sizeof(decltype(d_buffer)) * 8 - B);
             for (auto const& val : values) {
                 if constexpr (std::is_signed_v<T>)
                     d_buffer |= static_cast<decltype(d_buffer)>(static_cast<std::make_unsigned_t<T>>(val) & mask) << d_buffered_bits;
@@ -297,7 +297,7 @@ public:
         if (B==0)
             std::fill(values.begin(), values.end(), T{0});
         else {
-            T const mask = static_cast<T>((1ul << B) - 1);
+            T const mask = static_cast<T>(~std::uint64_t{0} >> (64 - B));
             T const is_negative = std::is_unsigned_v<T> ? T(0) : T(T(1) << (B - 1));
             for (auto& p : values) {
                 p = static_cast<T>(d_buffer);
@@ -356,7 +356,7 @@ public:
                 }
                 if constexpr (B != 8 * sizeof(T)) {
                     constexpr T is_negative = std::is_unsigned_v<T> ? T(0) : T(T(1) << (B - 1));
-                    constexpr auto mask = static_cast<std::make_unsigned_t<T>>((1ul << B) - 1);
+                    constexpr auto mask = static_cast<std::make_unsigned_t<T>>(~std::uint64_t{0} >> (64 - B));
                     if (p & is_negative) p |= static_cast<T>(~mask);
                     else p &= static_cast<T>(mask);
                 }

@@ -751,7 +751,7 @@ public:
      * @throws std::invalid_argument If the provided dimensions differ from dimensions that were set earlier.
      */
     void dim(std::vector<std::size_t> const& dim) {
-        if (d_dim.size() == 0 || size() == std::accumulate(dim.begin(), dim.end(), 1ul, std::multiplies<>()))
+        if (d_dim.size() == 0 || size() == std::accumulate(dim.begin(), dim.end(), std::size_t{1}, std::multiplies<>()))
             d_dim = dim;
         if (dim != d_dim)
             throw std::invalid_argument("Dimensions already set.");
@@ -1073,7 +1073,7 @@ private:
                                                             std::integral<typename std::iterator_traits<Iterator>::value_type>)
     std::vector<std::uint8_t> const f_compress(Iterator data) noexcept {
         using T = typename std::iterator_traits<Iterator>::value_type;
-        std::size_t terse_frame_size = static_cast<std::size_t>(d_size * sizeof(decltype(*data)) * 0.01) + 2 * (d_block * sizeof(decltype(*data)) + 4);
+        std::size_t terse_frame_size = static_cast<std::size_t>(d_size * sizeof(decltype(*data)) * 0.01) + 2 * (d_block * sizeof(decltype(*data)) + 32);
         terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
         std::vector<std::uint8_t> terse_frame(terse_frame_size);
         Unique_array<std::remove_const_t<T>> buffer(d_block);
@@ -1084,8 +1084,9 @@ private:
         std::size_t prevmasked_bits = 0;
         for (std::size_t from = 0; from < d_size; from += d_block) {
             std::size_t index = static_cast<std::size_t>(bitqueue.data() - terse_frame.data());
-            if (index > terse_frame.size() - d_block * sizeof(decltype(*data)) - 2) {
-                terse_frame_size = static_cast<std::size_t>(1.1 * terse_frame.size() * d_size / from);
+            if (index > terse_frame.size() - d_block * sizeof(decltype(*data)) - 32) {
+                terse_frame_size = std::max(static_cast<std::size_t>(1.1 * terse_frame.size() * d_size / from),
+                                            index + 2 * (d_block * sizeof(decltype(*data)) + 32));
                 terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
                 terse_frame.resize(terse_frame_size);
                 bitqueue.relocate(terse_frame.data() + index);
@@ -1116,7 +1117,7 @@ private:
     std::vector<std::uint8_t> const f_compress(Iterator data) noexcept {
         using T = typename std::iterator_traits<Iterator>::value_type;
         std::uint8_t binary_precision = std::min(d_binary_precision, static_cast<std::uint8_t>(std::numeric_limits<T>::digits +1));
-        std::size_t terse_frame_size = static_cast<std::size_t>(d_size * sizeof(T) * 0.01) + 2 * (d_block * sizeof(decltype(*data)) + 4);
+        std::size_t terse_frame_size = static_cast<std::size_t>(d_size * sizeof(T) * 0.01) + 2 * (d_block * sizeof(decltype(*data)) + 32);
         terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
         std::vector<std::uint8_t> terse_frame(terse_frame_size);
         Unique_array<std::remove_const_t<T>> buffer(d_block);
@@ -1129,8 +1130,9 @@ private:
         std::size_t mantissa_bits = (static_cast<std::size_t>(1) << (binary_precision - 1));
         for (std::size_t from = 0; from < d_size; from += d_block) {
             std::size_t index = static_cast<std::size_t>(bitqueue.data() - terse_frame.data());
-            if (index > terse_frame.size() - d_block * sizeof(decltype(*data)) - 2) {
-                terse_frame_size = static_cast<std::size_t>(1.1 * terse_frame.size() * d_size / from);
+            if (index > terse_frame.size() - d_block * sizeof(decltype(*data)) - 32) {
+                terse_frame_size = std::max(static_cast<std::size_t>(1.1 * terse_frame.size() * d_size / from),
+                                            index + 2 * (d_block * sizeof(decltype(*data)) + 32));
                 terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
                 terse_frame.resize(terse_frame_size);
                 bitqueue.relocate(terse_frame.data() + index);
@@ -1221,7 +1223,7 @@ private:
         static_assert(std::is_unsigned_v<T>, "Cannot compress signed data with Terse_mode::small");
         //std::size_t const block = std::min(d_block, 24ul);
         std::size_t block = std::min(d_block, std::size_t(24));
-        std::size_t terse_frame_size = static_cast<std::size_t>(d_size * sizeof(decltype(*data)) * 0.01) + 2 * (d_block * sizeof(decltype(*data)) + 4);
+        std::size_t terse_frame_size = static_cast<std::size_t>(d_size * sizeof(decltype(*data)) * 0.01) + 2 * (d_block * sizeof(decltype(*data)) + 32);
         terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
         std::vector<std::uint8_t> terse_frame(terse_frame_size);
         Bitqueue_push_back bitqueue(terse_frame);
@@ -1230,8 +1232,9 @@ private:
         std::size_t prevbits = 0;
         for (std::size_t from = 0; from < d_size; from += block) {
             std::size_t index = static_cast<std::size_t>(bitqueue.data() - terse_frame.data());
-            if (index > terse_frame.size() - block * sizeof(decltype(*data)) - 2) {
-                terse_frame_size = static_cast<std::size_t>(1.1 * terse_frame.size() * d_size / from);
+            if (index > terse_frame.size() - block * sizeof(decltype(*data)) - 32) {
+                terse_frame_size = std::max(static_cast<std::size_t>(1.1 * terse_frame.size() * d_size / from),
+                                            index + 2 * (d_block * sizeof(decltype(*data)) + 32));
                 terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
                 terse_frame.resize(terse_frame_size);
                 bitqueue.relocate(terse_frame.data() + index);
@@ -1276,8 +1279,11 @@ private:
         prevbits = sizeof(T) * 8 + 2;
         for ( ; from < d_size; from += block) {
             std::size_t index = static_cast<std::size_t>(bitqueue.data() - terse_frame.data());
-            if (index > terse_frame.size() - block * sizeof(decltype(*data)) - 2) {
-                terse_frame.resize(static_cast<std::size_t>(1.1 * terse_frame.size() * d_size / from));
+            if (index > terse_frame.size() - block * sizeof(decltype(*data)) - 32) {
+                std::size_t terse_frame_size = std::max(static_cast<std::size_t>(1.1 * terse_frame.size() * d_size / from),
+                                                        index + 2 * (block * sizeof(decltype(*data)) + 32));
+                terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
+                terse_frame.resize(terse_frame_size);
                 bitqueue.relocate(terse_frame.data() + index);
             }
             std::size_t to = std::min(d_size, from + block);

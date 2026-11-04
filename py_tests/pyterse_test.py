@@ -253,6 +253,35 @@ class TestTerseLibrary(unittest.TestCase):
         terse.set_dop(0.5)
         self.assertEqual(terse.dop(), 0.5)
 
+    def test_random_bit_widths(self):
+        """Test round trip of values with random bit widths"""
+        # Blocks with random numbers of significant bits and saturated values
+        # need more space than the uncompressed values. The buffer for the
+        # compressed frame is grown while compressing, which could write past
+        # its end. Only detected with AddressSanitizer, as the values are
+        # still correct.
+        rng = np.random.default_rng(0)
+        for dtype in [np.uint8, np.uint16, np.uint32]:
+            width = 8 * np.dtype(dtype).itemsize
+            for n in range(1, 401):
+                bits = rng.integers(1, width + 1, size=n)
+                data = (rng.integers(0, 2**63, size=n, dtype=np.uint64) >> (63 - bits).astype(np.uint64)).astype(dtype)
+                data[rng.random(n) < 0.125] = np.iinfo(dtype).max
+                np.testing.assert_array_equal(Terse(data, TerseMode.UNSIGNED).prolix(), data)
+
+    def test_full_range_32_bit_values(self):
+        """Test round trip of 32 bit values using all bits"""
+        # The bit masks were computed with (1ul << bits) - 1, which is
+        # undefined for 32 bits where unsigned long has 32 bits (Windows).
+        # Signed 32 bit values then came back wrong.
+        rng = np.random.default_rng(0)
+        for dtype, modes in [(np.uint32, [TerseMode.DEFAULT, TerseMode.UNSIGNED]),
+                             (np.int32, [TerseMode.DEFAULT, TerseMode.SIGNED])]:
+            info = np.iinfo(dtype)
+            data = rng.integers(info.min, info.max, size=1200, endpoint=True, dtype=dtype)
+            for mode in modes:
+                np.testing.assert_array_equal(Terse(data, mode).prolix(), data)
+
     def test_error_handling(self):
         """Test error handling"""
         terse = Terse(self.test_data_1d)
