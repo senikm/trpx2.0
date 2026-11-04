@@ -366,7 +366,7 @@ public:
         std::string values;
         for (auto it = container.begin(); it != container.end(); ++it) {
             values.append(std::to_string(*it));
-            if (it != container.end() + 1)
+            if (it + 1 != container.end())
                 values.append(" ");
         }
         return add_attribute(attribute, values);
