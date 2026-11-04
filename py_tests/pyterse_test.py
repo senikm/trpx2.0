@@ -5,6 +5,7 @@ import shutil
 import sys
 import os
 import tempfile
+import subprocess
 
 for root, dirs, files in os.walk('.'):
     if '__pycache__' in dirs:
@@ -42,6 +43,20 @@ class TestTerseLibrary(unittest.TestCase):
             np.testing.assert_array_equal(result, data)
             self.assertEqual(result.dtype, data.dtype)
 
+    @unittest.skipUnless(os.path.isdir("/proc/self/task"), "requires /proc/self/task (Linux)")
+    def test_import_starts_no_threads(self):
+        """Test that importing pyterse does not start the thread pool"""
+        # The thread pool used to be created at program start-up, i.e. by
+        # loading the module, instead of when it is used first.
+        code = ("import os, sys, numpy\n"
+                "sys.path.insert(0, sys.argv[1])\n"
+                "before = len(os.listdir('/proc/self/task'))\n"
+                "import pyterse\n"
+                "print(before, len(os.listdir('/proc/self/task')))\n")
+        path = os.path.dirname(sys.modules["pyterse"].__file__)
+        before, after = subprocess.run([sys.executable, "-c", code, path], check=True, capture_output=True,
+                                       text=True).stdout.split()
+        self.assertEqual(after, before)
 
     def test_dimensions(self):
         """Test handling of different dimensional arrays"""
@@ -86,6 +101,23 @@ class TestTerseLibrary(unittest.TestCase):
         test_metadata = "<metadata>test</metadata>"
         terse.set_metadata(0, test_metadata)
         self.assertEqual(terse.metadata(0), test_metadata)
+
+    def test_stream_metadata(self):
+        """Test reading metadata from a stream"""
+        # A short string is stored in the std::string object itself, a long
+        # one in memory allocated by it.
+        metadata = ["<m>short</m>", "<metadata>" + "long " * 20 + "</metadata>"]
+        data = np.arange(2 * 24, dtype=np.uint16).reshape(2, 24)
+        terse = Terse()
+        for frame, frame_metadata in zip(data, metadata):
+            terse.push_back(frame)
+            terse.set_metadata(terse.number_of_frames - 1, frame_metadata)
+        stream = io.BytesIO()
+        terse.write(stream)
+        stream.seek(0)
+        terse_read = Terse(stream)
+        self.assertEqual([terse_read.metadata(i) for i in range(2)], metadata)
+        np.testing.assert_array_equal(terse_read.prolix(), data)
 
     def test_dimension_operations(self):
         """Test dimension-related operations"""
@@ -181,6 +213,25 @@ class TestTerseLibrary(unittest.TestCase):
             for _ in range(5):
                 result = self.prolix_frames(terse_frames, terse_rest)
                 np.testing.assert_array_equal(result, data)
+
+    def test_saturated_module_gaps(self):
+        """Test round trip of an image with saturated module gaps"""
+        # An Eiger 4M like image of small Poisson distributed values with
+        # module gaps set to the maximum value. With 2166 instead of 2167 rows
+        # the number of values is a multiple of the block size of 12.
+        rng = np.random.default_rng(0)
+        image = rng.poisson(5.0, size=(2166, 2070))
+        gaps = (np.arange(2166) % 551 >= 514)[:, None] | (np.arange(2070) % 1040 >= 1030)
+        for dtype in [np.uint16, np.uint32]:
+            data = np.where(gaps, np.iinfo(dtype).max, image).astype(dtype)
+            np.testing.assert_array_equal(Terse(data).prolix(), data)
+
+    def test_saturated_block_followed_by_small_values(self):
+        """Test round trip of a saturated block followed by blocks of small values"""
+        # The maximum value + 1 wraps around to 0 for 32 bit values.
+        for dtype in [np.uint16, np.uint32]:
+            data = np.repeat(np.array([np.iinfo(dtype).max, 0, 1, 0, 2], dtype=dtype), 12)
+            np.testing.assert_array_equal(Terse(data).prolix(), data)
 
     def test_compression_settings(self):
         """Test compression settings"""

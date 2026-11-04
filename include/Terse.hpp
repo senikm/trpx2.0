@@ -304,6 +304,26 @@ concept Container = requires(T& c) {
 
 class Concurrent;
 
+namespace detail {
+struct Terse_copyable {};
+
+/**
+ * @brief Empty base class that makes Terse<Concurrent> move-only.
+ *
+ * Terse<Concurrent> stores frames that are still being compressed as std::future objects, which cannot be
+ * copied. Without this base, the implicitly declared copy constructor and copy assignment would not be deleted
+ * (std::vector does not constrain its copy operations), so std::is_copy_constructible would report true and
+ * code that relies on it (e.g. pybind11) would fail to compile when it tries to copy.
+ */
+struct Terse_move_only {
+    Terse_move_only() = default;
+    Terse_move_only(Terse_move_only const&) = delete;
+    Terse_move_only& operator=(Terse_move_only const&) = delete;
+    Terse_move_only(Terse_move_only&&) = default;
+    Terse_move_only& operator=(Terse_move_only&&) = default;
+};
+} // end namespace detail
+
 /**
  * @enum Terse_mode
  * @brief Defines the modes used for encoding data in a Terse object.
@@ -335,7 +355,7 @@ enum class Terse_mode {
 };
 
 template<typename CONCURRENT = void>
-class Terse {
+class Terse : private std::conditional_t<std::is_same_v<CONCURRENT, Concurrent>, detail::Terse_move_only, detail::Terse_copyable> {
     static_assert(std::is_same_v<CONCURRENT, void> || std::is_same_v<CONCURRENT, Concurrent>, "Terse is either Concurrent or not");
 #ifndef Concurrent_h
     static_assert(std::is_same_v<CONCURRENT, void>, "Concurrent.hpp must be included before #include \"Terse.hpp\"");
@@ -460,7 +480,7 @@ public:
             d_terse_frames.insert(at, d_concurrent->background([this, d = std::move(data), mode] { return f_compress(mode, d.data()); }));
         else {
             d_terse_frames.insert(at, f_compress(mode, data.data()));
-            auto local_data = std::move(data);
+            [[maybe_unused]] auto local_data = std::move(data);
         }
     }
 
@@ -975,7 +995,7 @@ private:
                 unsigned int val;
                 while (meta_str >> val) {
                     d_metadata.push_back(std::string(val, ' '));
-                    istream.read(reinterpret_cast<char*>(&d_metadata.back()), val);
+                    istream.read(d_metadata.back().data(), val);
                 }
             }
             d_terse_frames.resize(std::stoull(xmle.attribute("number_of_frames")));
@@ -1052,7 +1072,7 @@ private:
     template <Terse_mode MODE, typename Iterator> requires ((MODE == Terse_mode::Signed || MODE == Terse_mode::Unsigned) &&
                                                             std::integral<typename std::iterator_traits<Iterator>::value_type>)
     std::vector<std::uint8_t> const f_compress(Iterator data) noexcept {
-        using T = std::iterator_traits<Iterator>::value_type;
+        using T = typename std::iterator_traits<Iterator>::value_type;
         std::size_t terse_frame_size = static_cast<std::size_t>(d_size * sizeof(decltype(*data)) * 0.01) + 2 * (d_block * sizeof(decltype(*data)) + 32);
         terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
         std::vector<std::uint8_t> terse_frame(terse_frame_size);
@@ -1080,7 +1100,7 @@ private:
                 if (significant_bits != sizeof(T) * 8)
                     bitqueue.push_back(significant_bits, data_block);
                 else { // masked data
-                    std::transform(data_block.begin(), data_block.end(), buffer.begin(), [](T val) {return val + 1;});
+                    std::transform(data_block.begin(), data_block.end(), buffer.begin(), [](T val) {return static_cast<T>(val + 1);});
                     std::uint8_t masked_bits = f_most_significant_bit(std::span(buffer.begin(), buffer.end()));
                     PUSH_BITS(prevmasked_bits, masked_bits);
                     bitqueue.push_back(masked_bits, buffer);
@@ -1095,7 +1115,7 @@ private:
 
     template <Terse_mode MODE, typename Iterator> requires (std::floating_point<typename std::iterator_traits<Iterator>::value_type>)
     std::vector<std::uint8_t> const f_compress(Iterator data) noexcept {
-        using T = std::iterator_traits<Iterator>::value_type;
+        using T = typename std::iterator_traits<Iterator>::value_type;
         std::uint8_t binary_precision = std::min(d_binary_precision, static_cast<std::uint8_t>(std::numeric_limits<T>::digits +1));
         std::size_t terse_frame_size = static_cast<std::size_t>(d_size * sizeof(T) * 0.01) + 2 * (d_block * sizeof(decltype(*data)) + 32);
         terse_frame_size = (terse_frame_size + 7) & ~std::size_t(7);
@@ -1152,9 +1172,9 @@ private:
             bitqueue.push_back<1>(0b1);
         else if (previous_maxval == maxval)
             bitqueue.push_back<2>(0b11);
-        else if (previous_maxval + 1 == maxval)
+        else if (previous_maxval < maxval && previous_maxval + 1 == maxval)
             bitqueue.push_back<2>(0b10);
-        else if (maxval != 6 && previous_maxval - 1 == maxval)
+        else if (maxval != 6 && previous_maxval > maxval && previous_maxval - 1 == maxval)
             bitqueue.push_back<2>(0b01);
         else if (previous_maxval == 6 && maxval == 4)
             bitqueue.push_back<2>(0b10);
@@ -1199,7 +1219,7 @@ private:
     
     template <Terse_mode MODE, typename Iterator> requires (MODE == Terse_mode::Small_unsigned)
     std::vector<std::uint8_t> const f_compress(Iterator data) noexcept {
-        using T = std::iterator_traits<Iterator>::value_type;
+        using T = typename std::iterator_traits<Iterator>::value_type;
         static_assert(std::is_unsigned_v<T>, "Cannot compress signed data with Terse_mode::small");
         //std::size_t const block = std::min(d_block, 24ul);
         std::size_t block = std::min(d_block, std::size_t(24));
@@ -1267,13 +1287,17 @@ private:
                 bitqueue.relocate(terse_frame.data() + index);
             }
             std::size_t to = std::min(d_size, from + block);
-            std::transform(data + static_cast<std::ptrdiff_t>(from), data + static_cast<std::ptrdiff_t>(to), buffer.begin(), [](T val) {return val + 1;});
+            std::transform(data + static_cast<std::ptrdiff_t>(from), data + static_cast<std::ptrdiff_t>(to), buffer.begin(), [](T val) {return static_cast<T>(val + 1);});
             std::span<T const> unmasked(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(to - from));
             max = std::ranges::max(unmasked);
-            if (max < 7)
+            if (max < 7) {
                 f_compress_weak_block(unmasked, bitqueue, max, prevmax);
-            else
+                prevbits = 65;
+            }
+            else {
                 f_compress_strong_block(unmasked, bitqueue, f_most_significant_bit(max), prevbits);
+                prevmax = max;
+            }
             if (to != d_size) {
                 std::span test_for_masked(data + static_cast<std::ptrdiff_t>(to), std::min(d_size - to, block));
                 if (std::ranges::max(test_for_masked) != std::numeric_limits<T>::max()) {
@@ -1326,7 +1350,7 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
     
     template <std::size_t N, typename Iterator>
     void f_prolix_signed(Iterator begin, std::size_t frame) noexcept {
-        using T = std::iterator_traits<Iterator>::value_type;
+        using T = typename std::iterator_traits<Iterator>::value_type;
         Bitqueue_pop bitqueue(f_get_frame(frame));
         uint8_t significant_bits = 0;
         for (std::size_t from = 0; from < d_size; from += d_block) {
@@ -1341,7 +1365,7 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
 
     template <std::size_t N, typename Iterator> 
     void f_prolix_float(Iterator begin, std::size_t frame) noexcept {
-        using T = std::iterator_traits<Iterator>::value_type;
+        using T = typename std::iterator_traits<Iterator>::value_type;
         Bitqueue_pop bitqueue(f_get_frame(frame));
         bitqueue.pop<18, std::size_t>();
         std::uint8_t const binary_precision = bitqueue.pop<6, std::uint8_t>();
@@ -1376,7 +1400,7 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
     
     template <std::size_t N, typename Iterator>
     void f_prolix_unsigned(Iterator begin, std::size_t frame) noexcept {
-        using T = std::iterator_traits<Iterator>::value_type;
+        using T = typename std::iterator_traits<Iterator>::value_type;
         Bitqueue_pop bitqueue(f_get_frame(frame));
         bitqueue.pop<18, std::size_t>();
         uint8_t significant_bits = 0;
@@ -1430,7 +1454,7 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
     
     template <std::size_t N, typename Iterator> requires std::integral<typename std::iterator_traits<Iterator>::value_type>
     void f_prolix_small_unsigned(Iterator begin, std::size_t frame) noexcept {
-        using T = std::iterator_traits<Iterator>::value_type;
+        using T = typename std::iterator_traits<Iterator>::value_type;
         //std::size_t block = std::min(d_block, 24ul);
         std::size_t block = std::min(d_block, std::size_t(24));
         Bitqueue_pop bitqueue(f_get_frame(frame));
@@ -1476,7 +1500,7 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
 
     template <std::size_t N, typename Iterator>
     void f_prolix_small_unsigned_masked(Bitqueue_pop& bitqueue, Iterator begin, std::size_t& from, auto& max, auto& bits) noexcept {
-        using T = std::iterator_traits<Iterator>::value_type;
+        using T = typename std::iterator_traits<Iterator>::value_type;
         //std::size_t block = std::min(d_block, 24ul);
         std::size_t block = std::min(d_block, std::size_t(24));
         Unique_array<T> buffer(block);
