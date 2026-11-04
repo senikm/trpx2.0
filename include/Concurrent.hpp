@@ -1,6 +1,7 @@
 #ifndef Concurrent_h
 #define Concurrent_h
 
+#include <algorithm>
 #include <iostream>
 #include <queue>
 #include <thread>
@@ -12,6 +13,8 @@
 #include <atomic>
 #include <list>
 #include <optional>
+#include <tuple>
+#include <unordered_map>
 
 namespace jpa {
 /**
