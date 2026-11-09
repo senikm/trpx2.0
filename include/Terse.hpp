@@ -22,6 +22,7 @@
 #include <optional>
 #include <variant>
 #include <cmath>
+#include <memory>
 #include "Bitqueue.hpp"
 #include "Unique_array.hpp"
 #include "XML_element.hpp"
@@ -1338,6 +1339,13 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
 
     template <std::size_t N, typename Iterator>
     void f_prolix(Iterator const begin, std::size_t const frame) noexcept {
+        // The decoders read the bits of each value into the type of the decompressed values, and sign-extend them if
+        // that type is signed. Unsigned data are therefore decompressed into signed values through the unsigned type
+        // of the same size (which may access them).
+        using T = typename std::iterator_traits<Iterator>::value_type;
+        if constexpr (std::signed_integral<T>)
+            if (!is_signed())
+                return f_prolix<N>(reinterpret_cast<std::make_unsigned_t<T>*>(std::to_address(begin)), frame);
         Bitqueue_pop bitqueue(f_get_frame(frame));
         std::size_t flag = bitqueue.pop<18, std::size_t>();
         switch (flag) {
