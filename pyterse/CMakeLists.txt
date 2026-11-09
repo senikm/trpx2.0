@@ -9,6 +9,8 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/AlignCode.cmake)
+
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 
 find_package(pybind11 CONFIG REQUIRED)

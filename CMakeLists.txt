@@ -13,6 +13,8 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AlignCode.cmake)
+
 
 if(BUILD_PYTERSE)
   add_subdirectory(pyterse)
