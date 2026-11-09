@@ -1537,7 +1537,8 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
             POP(std::int64_t, significant_bits, tmp.data(), num);
         else
             POP(std::uint64_t, significant_bits, reinterpret_cast<std::uint64_t*>(tmp.data()), num);
-        std::copy(tmp.begin(), tmp.end(), begin);
+        using T = typename std::iterator_traits<Iterator>::value_type;
+        std::transform(tmp.begin(), tmp.end(), begin, [](std::int64_t const value) { return static_cast<T>(value); });
     }
     
 #undef POP
