@@ -63,3 +63,23 @@ jobs:
         run: .\build_test.exe
       - name: Test file format
         run: .\format_test.exe
+
+  # Builds the benchmarks with CMake, without running them: the timings of
+  # shared runners are not meaningful.
+  benchmarks:
+    name: Build benchmarks on Ubuntu
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install Google Benchmark
+        run: sudo apt-get update && sudo apt-get install -y libbenchmark-dev
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_PYTERSE=OFF -DBUILD_TERSECODEC=OFF -DBUILD_BENCHMARKS=ON
+          -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror"
+      # Naming both targets makes the build fail if CMake did not find Google
+      # Benchmark, instead of silently skipping terse_gbenchmark.
+      - name: Build
+        run: cmake --build build --target terse_benchmark terse_gbenchmark

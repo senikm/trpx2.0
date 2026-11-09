@@ -4,6 +4,7 @@ project(pyterse_and_tersecodec LANGUAGES CXX)
 
 option(BUILD_PYTERSE "Build the pyterse Python extension" ON)
 option(BUILD_TERSECODEC "Build the HDF5 filter library (tersecodec) plugin" ON)
+option(BUILD_BENCHMARKS "Build the micro benchmarks of compression and decompression" OFF)
 
 
 set(CMAKE_CXX_STANDARD 20)
@@ -19,4 +20,8 @@ endif()
 
 if(BUILD_TERSECODEC)
   add_subdirectory(tersecodec)
+endif()
+
+if(BUILD_BENCHMARKS)
+  add_subdirectory(benchmarks)
 endif()
