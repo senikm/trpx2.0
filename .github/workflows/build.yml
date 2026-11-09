@@ -5,8 +5,8 @@ on:
   pull_request:
 
 jobs:
-  # Builds tests/build_test.cpp with the compilers of the runner images and
-  # runs it.
+  # Builds tests/build_test.cpp and tests/format_test.cpp with the compilers of
+  # the runner images and runs them.
   posix:
     name: ${{ matrix.os }} ${{ matrix.cxx }} ${{ matrix.flags }}
     strategy:
@@ -33,9 +33,14 @@ jobs:
         if: matrix.packages
         run: sudo apt-get update && sudo apt-get install -y ${{ matrix.packages }}
       - name: Build
-        run: ${{ matrix.cxx }} --version && ${{ matrix.cxx }} -std=c++20 -Wall -Wextra -Werror -pthread ${{ matrix.flags }} -I include tests/build_test.cpp -o build_test
+        run: |
+          ${{ matrix.cxx }} --version
+          ${{ matrix.cxx }} -std=c++20 -Wall -Wextra -Werror -pthread ${{ matrix.flags }} -I include tests/build_test.cpp -o build_test
+          ${{ matrix.cxx }} -std=c++20 -Wall -Wextra -Werror -pthread ${{ matrix.flags }} -I include tests/format_test.cpp -o format_test
       - name: Test
         run: ./build_test
+      - name: Test file format
+        run: ./format_test
 
   windows:
     name: ${{ matrix.os }} MSVC
@@ -52,6 +57,9 @@ jobs:
         shell: cmd
         run: |
           for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
-          cl /std:c++20 /permissive- /EHsc /W4 /WX /I include tests\build_test.cpp
+          cl /std:c++20 /permissive- /EHsc /W4 /WX /I include tests\build_test.cpp || exit /b 1
+          cl /std:c++20 /permissive- /EHsc /W4 /WX /I include tests\format_test.cpp
       - name: Test
         run: .\build_test.exe
+      - name: Test file format
+        run: .\format_test.exe
