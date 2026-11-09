@@ -1452,6 +1452,31 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
         return result;
     }
     
+    // Decodes a block of values that were packed as the digits of a single number in base BASE (= max + 1) by
+    // f_compress_weak_block, and subtracts 'offset' from each. BASE is a compile-time constant, so that the
+    // compiler replaces the divisions by multiplications and shifts.
+    template <std::size_t BASE, typename T>
+    static void f_unpack_radix(std::size_t val, std::span<T> const data_block, T const offset) noexcept {
+        for (auto& value : data_block) {
+            value = static_cast<T>(static_cast<T>(val % BASE) - offset);
+            val /= BASE;
+        }
+    }
+
+    template <typename T>
+    void f_unpack_radix(Bitqueue_pop& bitqueue, std::size_t const max, std::span<T> const data_block, T const offset) noexcept {
+        std::size_t const val = bitqueue.pop<std::size_t>(f_most_significant_bit(f_integer_power(max + 1, data_block.size()) - 1));
+        switch (max) {
+            case 0:  return f_unpack_radix<1>(val, data_block, offset);
+            case 1:  return f_unpack_radix<2>(val, data_block, offset);
+            case 2:  return f_unpack_radix<3>(val, data_block, offset);
+            case 3:  return f_unpack_radix<4>(val, data_block, offset);
+            case 4:  return f_unpack_radix<5>(val, data_block, offset);
+            case 5:  return f_unpack_radix<6>(val, data_block, offset);
+            default: return f_unpack_radix<7>(val, data_block, offset);
+        }
+    }
+
     template <std::size_t N, typename Iterator> requires std::integral<typename std::iterator_traits<Iterator>::value_type>
     void f_prolix_small_unsigned(Iterator begin, std::size_t frame) noexcept {
         using T = typename std::iterator_traits<Iterator>::value_type;
@@ -1467,28 +1492,14 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
             switch (max) {
                 case 0: POP(T, 0, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from)); break;
                 case 1: POP(T, 1, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from)); break;
-                case 2: {
-                    std::span<T> data_block(begin + static_cast<std::ptrdiff_t>(from), begin + static_cast<std::ptrdiff_t>(to));
-                    std::size_t val = bitqueue.pop<std::size_t>(f_most_significant_bit(f_integer_power(3, data_block.size()) - 1));
-                    for (std::size_t i = 0; i != data_block.size(); ++i) {
-                        data_block[i] = val % (3);
-                        val /= 3;
-                    }
+                case 2:
+                    f_unpack_radix(bitqueue, max, std::span<T>(begin + static_cast<std::ptrdiff_t>(from), begin + static_cast<std::ptrdiff_t>(to)), T{0});
                     break;
-                }
                 case 3: POP(T, 2, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from)); break;
                 case 7: POP(T, 3, begin + static_cast<std::ptrdiff_t>(from), static_cast<std::ptrdiff_t>(to - from)); break;
                 default: {
-                    if (max < 7) {
-                        std::span<T> data_block(begin + static_cast<std::ptrdiff_t>(from), begin + static_cast<std::ptrdiff_t>(to));
-                        std::size_t const mult = f_integer_power(static_cast<std::size_t>(max) + 1, data_block.size()) - 1;
-                        std::size_t val = bitqueue.pop<std::size_t>(f_most_significant_bit(mult));
-                        for (std::size_t i = 0; i != data_block.size(); ++i) {
-                            auto [quot, rem] = std::div(static_cast<std::ptrdiff_t>(val), static_cast<std::ptrdiff_t>(max + 1));
-                            data_block[i] = static_cast<T>(rem);
-                            val = static_cast<std::size_t>(quot);
-                        }
-                    }
+                    if (max < 7)
+                        f_unpack_radix(bitqueue, max, std::span<T>(begin + static_cast<std::ptrdiff_t>(from), begin + static_cast<std::ptrdiff_t>(to)), T{0});
                     else if (bits == d_prolix_bits)
                         f_prolix_small_unsigned_masked<N>(bitqueue, begin, from, max, bits);
                     else
@@ -1514,16 +1525,8 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
                 for (std::ptrdiff_t i = static_cast<ptrdiff_t>(from); i != static_cast<std::ptrdiff_t>(to); ++i)
                     --begin[i];
             }
-            else {
-                std::span<T> data_block(begin + static_cast<std::ptrdiff_t>(from), begin + static_cast<std::ptrdiff_t>(to));
-                std::size_t const mult = f_integer_power(static_cast<std::size_t>(max) + 1, data_block.size()) - 1;
-                std::size_t val = bitqueue.pop<std::size_t>(f_most_significant_bit(mult));
-                for (std::size_t i = 0; i != data_block.size(); ++i) {
-                    auto [quot, rem] = std::div(static_cast<std::ptrdiff_t>(val), static_cast<std::ptrdiff_t>(max + 1));
-                    data_block[i] = static_cast<T>(rem) - 1;
-                    val = static_cast<std::size_t>(quot);
-                }
-            }
+            else
+                f_unpack_radix(bitqueue, max, std::span<T>(begin + static_cast<std::ptrdiff_t>(from), begin + static_cast<std::ptrdiff_t>(to)), T{1});
             masked = bitqueue.pop<1, uint8_t>();
             if (!masked)
                 break;
