@@ -304,6 +304,33 @@ class TestTerseLibrary(unittest.TestCase):
             for mode in modes:
                 np.testing.assert_array_equal(Terse(data, mode).prolix(), data)
 
+    def test_unsigned_into_signed_types(self):
+        """Test decompressing unsigned data into arrays of signed types"""
+        # The values were decompressed as if they were signed, e.g. 1 encoded
+        # with 1 bit became -1.
+        rng = np.random.default_rng(0)
+        for dtype, signed_dtypes in [(np.uint8, [np.int8, np.int16, np.int64]),
+                                     (np.uint16, [np.int16, np.int32, np.int64]),
+                                     (np.uint32, [np.int32, np.int64])]:
+            # Blocks of 12 values of at most 1, 6, 100 and half the maximum.
+            maxima = np.repeat(np.tile([1, 6, 100, np.iinfo(dtype).max // 2], 50), 12)
+            data = rng.integers(0, maxima, endpoint=True).astype(dtype)
+            masked = data.copy()
+            masked[rng.random(data.size) < 0.05] = np.iinfo(dtype).max
+            for mode in [TerseMode.SMALL_UNSIGNED, TerseMode.UNSIGNED, TerseMode.SIGNED]:
+                terse = Terse(data, mode)
+                for signed_dtype in signed_dtypes:
+                    np.testing.assert_array_equal(
+                        terse.prolix(np.empty(data.shape, signed_dtype)), data.astype(signed_dtype))
+            # Masked values (all bits set) are decompressed with all bits set.
+            for mode in [TerseMode.SMALL_UNSIGNED, TerseMode.UNSIGNED]:
+                terse = Terse(masked, mode)
+                for signed_dtype in signed_dtypes:
+                    expected = masked.astype(signed_dtype)
+                    expected[masked == np.iinfo(dtype).max] = -1
+                    np.testing.assert_array_equal(
+                        terse.prolix(np.empty(data.shape, signed_dtype)), expected)
+
     def test_error_handling(self):
         """Test error handling"""
         terse = Terse(self.test_data_1d)
