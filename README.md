@@ -139,6 +139,43 @@ make
 python3 py_tests/pyterse_test.py  # Will run unittests
 ```
 
+## Benchmarks
+
+The benchmarks in `benchmarks/` measure single-threaded compression and decompression of synthetic diffraction
+frames (sparse, weak and strong background, with Bragg spots and masked module gaps), and the `Bitqueue` bit packing
+that underlies both. They need neither Python nor HDF5:
+
+```bash
+cmake -S . -B build-bench -DCMAKE_BUILD_TYPE=Release -DBUILD_PYTERSE=OFF -DBUILD_TERSECODEC=OFF -DBUILD_BENCHMARKS=ON
+cmake --build build-bench
+```
+
+This builds two programs:
+
+- `terse_gbenchmark`, built if CMake finds [Google Benchmark](https://github.com/google/benchmark) (set
+  `benchmark_DIR` or `CMAKE_PREFIX_PATH` if it is not installed in a standard location). Use it to measure
+  performance. Besides the usual `--benchmark_*` options, it takes `--pixels=N` (default 2048 x 2048).
+- `terse_benchmark`, without dependencies. Every benchmark checks that the data survive the round trip, and the
+  program returns 1 otherwise. The `hash` column is a hash of the compressed stream: an optimization that must not
+  change the file format must leave all hashes unchanged. Options: `--filter SUBSTRING`, `--repetitions N`,
+  `--pixels N` and `--list`.
+
+The CI builds both on Ubuntu, but does not run them.
+
+To compare two versions, run both on an otherwise idle machine, pinned to one core and without address space
+randomization, and compare the results with `tools/compare.py` of Google Benchmark (which needs numpy and scipy):
+
+```bash
+ARGS="--benchmark_repetitions=12 --benchmark_enable_random_interleaving=true --benchmark_out_format=json"
+setarch $(uname -m) -R taskset -c 2 ./before/terse_gbenchmark $ARGS --benchmark_out=before.json
+setarch $(uname -m) -R taskset -c 2 ./after/terse_gbenchmark $ARGS --benchmark_out=after.json
+python3 benchmark/tools/compare.py benchmarks before.json after.json
+```
+
+`compare.py` tests whether the differences are significant, but it cannot detect a load on the machine that changed
+between the two runs, so repeat the comparison if the results look suspicious. Setting the CPU frequency governor to
+`performance` (e.g. `sudo cpupower frequency-set -g performance`) further reduces the noise.
+
 # HDF5 tersecodec
 
 ## Prerequisites
