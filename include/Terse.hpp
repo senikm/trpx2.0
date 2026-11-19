@@ -23,6 +23,8 @@
 #include <variant>
 #include <cmath>
 #include <memory>
+#include <cstring>
+#include <stdexcept>
 #include "Bitqueue.hpp"
 #include "Unique_array.hpp"
 #include "XML_element.hpp"
@@ -1606,38 +1608,53 @@ if (bitqueue.template pop<1,uint8_t>() == 0) {          \
         return static_cast<std::uint8_t>(std::min(r, sizeof(T0) * 8));
     }
     
+    /**
+     * Reads Terse data written by version 1 of Terse, which has no "memory_sizes_of_frames" attribute.
+     * Version 1 stores all frames in one stream of 'number_of_bytes' bytes. Each frame starts at a byte
+     * boundary and takes 1 + (number of encoded bits) / 8 bytes. All frames are Signed encoded.
+     * The frame boundaries are found by scanning the block headers of each frame. Each frame is copied
+     * into its own buffer, zero padded to a multiple of sizeof(std::size_t), as Bitqueue_pop requires.
+     *
+     * @throws std::runtime_error If the stream ends early, or the frames do not fit in 'number_of_bytes'.
+     */
     template <typename STREAM> requires std::derived_from<STREAM, std::istream>
     void f_fill_terse_frames(STREAM& istream, std::size_t const number_of_bytes) {
-        f_get_frame(0).resize(number_of_bytes);
-        istream.read(reinterpret_cast<char*>(&(f_get_frame(0)[0])), static_cast<std::ptrdiff_t>(number_of_bytes));
-        std::vector<std::size_t> terse_sizes(d_terse_frames.size());
-        std::uint8_t const* terse_begin = f_get_frame(0).data();
-        for (std::size_t current_frame = 0; current_frame != d_terse_frames.size(); ++current_frame) {
-            Bitqueue_pop bitqueue(f_get_frame(0));
-            uint8_t significant_bits = 0;
+        std::vector<std::uint8_t> data(number_of_bytes);
+        istream.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(number_of_bytes));
+        if (static_cast<std::size_t>(istream.gcount()) != number_of_bytes)
+            throw std::runtime_error("Terse data ends before memory_size bytes were read.");
+        std::size_t const total_bits = number_of_bytes * 8;
+        std::size_t frame_begin = 0;
+        for (std::size_t frame = 0; frame != d_terse_frames.size(); ++frame) {
+            std::size_t bit = frame_begin * 8;
+            auto read_bits = [&](unsigned const n) {
+                if (bit + n > total_bits)
+                    throw std::runtime_error("Terse data ends before all frames were read.");
+                unsigned val = 0;
+                for (unsigned i = 0; i != n; ++i, ++bit)
+                    val |= static_cast<unsigned>((data[bit / 8] >> (bit % 8)) & 1u) << i;
+                return val;
+            };
+            unsigned significant_bits = 0;
             for (std::size_t from = 0; from < size(); from += d_block) {
-                if (bitqueue.template pop<1,uint8_t>() == 0) {
-                    significant_bits = bitqueue.template pop<3,uint8_t>();
+                if (read_bits(1) == 0) {
+                    significant_bits = read_bits(3);
                     if (significant_bits == 7) {
-                        significant_bits += bitqueue.template pop<2,uint8_t>();
+                        significant_bits += read_bits(2);
                         if (significant_bits == 10)
-                            significant_bits += bitqueue.template pop<6,uint8_t>();
+                            significant_bits += read_bits(6);
                     }
                 }
-                bitqueue.skip(significant_bits * std::min(static_cast<std::size_t>(d_block), size() - from));
+                bit += significant_bits * std::min(d_block, size() - from);
             }
-            terse_sizes[current_frame] = static_cast<std::size_t>(bitqueue - terse_begin);
-            terse_begin += terse_sizes[current_frame];
+            if (bit > total_bits)
+                throw std::runtime_error("Terse data ends before all frames were read.");
+            std::size_t const frame_end = std::min(bit / 8 + 1, number_of_bytes);
+            auto& terse_frame = f_get_frame(frame);
+            terse_frame.assign((frame_end - frame_begin + sizeof(std::size_t) - 1) / sizeof(std::size_t) * sizeof(std::size_t), 0);
+            std::memcpy(terse_frame.data(), data.data() + frame_begin, frame_end - frame_begin);
+            frame_begin = frame_end;
         }
-        std::size_t data_start = terse_sizes[0];
-        for (std::size_t frame_num = 1; frame_num != d_terse_frames.size(); ++frame_num) {
-            terse_sizes[frame_num] = ((terse_sizes[frame_num] + sizeof(size_t) - 1) / sizeof(size_t)) * sizeof(size_t);
-            f_get_frame(frame_num).resize(terse_sizes[frame_num]);
-            std::memcpy(f_get_frame(frame_num).data(), f_get_frame(0).data() + data_start, terse_sizes[frame_num]);
-            data_start += terse_sizes[frame_num];
-        }
-        f_get_frame(0).resize(terse_sizes[0]);
-        f_get_frame(0).shrink_to_fit();
     }
 };
 } // end namespace jpa
