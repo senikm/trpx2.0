@@ -216,7 +216,6 @@ private:
  * **Usage:**
  * - Instantiate the class with a `Bitqueue` container.
  * - Use the `pop` methods to extract values of specific bit widths from the buffer.
- * - Use the `skip` methods to skip over bits without extracting them.
  *
  * **Features:**
  * - Supports fixed-width pops at compile-time (`pop<B>`).
@@ -361,33 +360,6 @@ public:
                     else p &= static_cast<T>(mask);
                 }
             }
-        }
-    }
-    
-    /**
-     * @brief Skips a fixed number of bits in the buffer.
-     * @tparam B Number of bits to skip.
-     */
-    template <std::size_t B>
-    constexpr void skip() {
-        if (B <= d_buffered_bits)
-            d_buffered_bits -= static_cast<std::uint8_t>(B);
-        else {
-            d_data += sizeof(std::size_t) + B / (sizeof(std::size_t) * 8) ;
-            d_buffered_bits = (sizeof(std::size_t) * 8) - (B % (sizeof(std::size_t) * 8));
-        }
-    }
-    
-    /**
-     * @brief Skips a specified number of bits in the buffer.
-     * @param B Number of bits to skip.
-     */
-    constexpr void skip(std::size_t const B) {
-        if (B <= d_buffered_bits)
-            d_buffered_bits -= static_cast<std::uint8_t>(B);
-        else {
-            d_data += sizeof(std::size_t) + B / (sizeof(std::size_t) * 8) ;
-            d_buffered_bits = (sizeof(std::size_t) * 8) - (B % (sizeof(std::size_t) * 8));
         }
     }
     
